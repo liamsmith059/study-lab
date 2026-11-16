@@ -1,6 +1,7 @@
 // Pure study logic: storage shape, spaced repetition, adaptive levels, session building, merging.
 // No DOM access here, so it can be tested in Node.
 import { RAW } from "./questions.js";
+import { LSAT_ITEMS, LSAT_PASSAGES } from "./lsat.js";
 
 export const SUBJECTS = [
   { key: "math", name: "Math", blurb: "Arithmetic, algebra, geometry, probability, functions" },
@@ -9,8 +10,13 @@ export const SUBJECTS = [
   { key: "geo", name: "Geography", blurb: "Capitals, physical geography, climate, Canada" },
   { key: "eng", name: "English & Vocabulary", blurb: "Word meanings, grammar, usage, literary devices" },
   { key: "econ", name: "Economics & Finance", blurb: "Markets, macro, investing, TFSA and RRSP" },
+  { key: "lsat", name: "LSAT", blurb: "Logical Reasoning arguments and Reading Comprehension passages", special: true },
 ];
 export const SUBJECT_KEYS = SUBJECTS.map((s) => s.key);
+// Core school subjects: what "Mixed review" and the Today panel cover. LSAT has its own rounds.
+export const CORE_KEYS = SUBJECTS.filter((s) => !s.special).map((s) => s.key);
+export const LETTERS = ["A", "B", "C", "D", "E"];
+export const PASSAGES = LSAT_PASSAGES;
 
 export const QUESTIONS = [];
 for (const s of Object.keys(RAW)) {
@@ -18,7 +24,21 @@ for (const s of Object.keys(RAW)) {
     QUESTIONS.push({ id: s + i, s, d: r[0], t: r[1], q: r[2], c: r[3], e: r[4] });
   });
 }
+// LSAT items: c is correct-first like the core bank; `fixed` is the A-E display order (correct in slot `a`).
+LSAT_ITEMS.forEach((r, i) => {
+  const fixed = r.c.slice(1);
+  fixed.splice(LETTERS.indexOf(r.a), 0, r.c[0]);
+  QUESTIONS.push({
+    id: "lsat" + i, s: "lsat", d: r.d, t: r.t, q: r.q, c: r.c.slice(), e: r.e,
+    fixed, len: r.len, stim: r.stim || "", p: r.p || "", trap: r.c[r.trap], te: r.te,
+  });
+});
 export const QMAP = Object.fromEntries(QUESTIONS.map((q) => [q.id, q]));
+
+// Display order for a question's choices: fixed A-E for LSAT, shuffled for everything else.
+export function choiceOrder(q) {
+  return q.fixed ? q.fixed.slice() : shuffle(q.c);
+}
 
 export const MIN = 60000;
 export const DAY = 86400000;
@@ -146,17 +166,17 @@ export function interleave(ids) {
   return out;
 }
 
-export function dueList(st, keys, now = Date.now()) {
+export function dueList(st, keys, now = Date.now(), filter = null) {
   return QUESTIONS.filter((q) => {
     const c = st.cards[q.id];
-    return keys.includes(q.s) && !!c && c.due <= now;
+    return keys.includes(q.s) && (!filter || filter(q)) && !!c && c.due <= now;
   }).sort((a, b) => st.cards[a.id].due - st.cards[b.id].due);
 }
 
 // mode: "subject" | "mixed" | "due"
-export function buildSession(st, keys, mode, now = Date.now()) {
-  const pool = QUESTIONS.filter((q) => keys.includes(q.s));
-  const due = dueList(st, keys, now);
+export function buildSession(st, keys, mode, now = Date.now(), filter = null) {
+  const pool = QUESTIONS.filter((q) => keys.includes(q.s) && (!filter || filter(q)));
+  const due = dueList(st, keys, now, filter);
   if (mode === "due") return interleave(due.map((q) => q.id)).slice(0, SIZE);
   const chosen = due.slice(0, 5).map((q) => q.id);
   const fresh = pool.filter((q) => !st.cards[q.id]);
@@ -181,6 +201,55 @@ export function buildSession(st, keys, mode, now = Date.now()) {
     ids = ids.concat(rest.slice(0, SIZE - ids.length));
   }
   return mode === "mixed" ? interleave(ids) : ids;
+}
+
+// ---------- LSAT rounds ----------
+export const isLR = (q) => q.s === "lsat" && !q.p;
+export const PASSAGE_KEYS = Array.from(new Set(QUESTIONS.filter((q) => q.p).map((q) => q.p)));
+export function passageIds(key) {
+  return QUESTIONS.filter((q) => q.p === key).map((q) => q.id);
+}
+// Real-test pace: 35 minutes for ~25 LR questions; 35 minutes for 4 passage sets.
+export const PACE = { lr: 85, set: 525 };
+
+// Pick the passage set for a long round: one with due questions first, then an unseen set whose
+// average difficulty suits the current level, then the weakest-known set.
+export function pickPassage(st, now = Date.now()) {
+  const lv = levelOf(st, "lsat");
+  const target = [0, 1.6, 2, 2.4][lv];
+  const info = PASSAGE_KEYS.map((key, idx) => {
+    const qs = QUESTIONS.filter((q) => q.p === key);
+    const cards = qs.map((q) => st.cards[q.id]);
+    return {
+      key, idx,
+      due: cards.filter((c) => c && c.due <= now).length,
+      unseen: cards.filter((c) => !c).length,
+      avgD: qs.reduce((a, q) => a + q.d, 0) / qs.length,
+      avgB: cards.reduce((a, c) => a + (c ? c.b : 0), 0) / qs.length,
+    };
+  });
+  const withDue = info.filter((x) => x.due > 0).sort((a, b) => b.due - a.due || a.idx - b.idx);
+  if (withDue.length) return withDue[0].key;
+  const fresh = info.filter((x) => x.unseen > 0).sort((a, b) => Math.abs(a.avgD - target) - Math.abs(b.avgD - target) || b.unseen - a.unseen || a.idx - b.idx);
+  if (fresh.length) return fresh[0].key;
+  return info.sort((a, b) => a.avgB - b.avgB || a.idx - b.idx)[0].key;
+}
+
+// Keep questions that share a passage together, in authored order, after any LR questions.
+export function groupPassages(ids) {
+  const lr = ids.filter((id) => !QMAP[id].p);
+  const keys = [];
+  for (const id of ids) { const p = QMAP[id].p; if (p && !keys.includes(p)) keys.push(p); }
+  return lr.concat(...keys.map((k) => passageIds(k).filter((id) => ids.includes(id))));
+}
+
+// kind: "short" (about 10 LR) | "long" (one passage set) | "mix" (5 LR + one passage set) | "due"
+export function buildLsatSession(st, kind, now = Date.now()) {
+  if (kind === "short") return buildSession(st, ["lsat"], "subject", now, isLR);
+  if (kind === "long") return passageIds(pickPassage(st, now));
+  if (kind === "mix") return buildSession(st, ["lsat"], "subject", now, isLR).slice(0, 5).concat(passageIds(pickPassage(st, now)));
+  if (kind === "due") return groupPassages(dueList(st, ["lsat"], now).slice(0, SIZE).map((q) => q.id));
+  return [];
 }
 
 // conf: "sure" | "unsure" | "guess"

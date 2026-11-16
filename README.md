@@ -2,6 +2,8 @@
 
 A free, static study site: 306 quiz questions across Math, Science, History, Geography, English & Vocabulary, and Economics & Finance, with spaced repetition (6 Leitner boxes), confidence ratings, adaptive difficulty, mixed review, and per-subject mastery.
 
+It also has a separate **LSAT prep** section: 50 original LSAT-style questions (32 Logical Reasoning arguments, short and medium, plus 4 Reading Comprehension passage sets covering law, social science, science and humanities). They have five fixed A–E choices, a passage panel that stays beside the questions on wide screens and folds away on phones, a "Tempting but wrong" note on every question, short, long and mixed rounds, and an optional count-up pace timer. LSAT is kept out of Mixed review.
+
 - No build step. Plain HTML, CSS and JavaScript modules.
 - Progress saves to the browser automatically (localStorage). No login needed.
 - Optional: sign in by email link to sync progress across devices (Supabase free tier).
@@ -13,6 +15,8 @@ index.html          page shell (all paths are relative, so it works under /<repo
 config.js           Supabase URL + anon key (blank = local-only, sign-in hidden)
 css/styles.css      styles (light/dark, phone and laptop)
 js/questions.js     the question bank
+js/lsat.js          the LSAT bank (Logical Reasoning items + Reading Comprehension passages)
+lsat-research.md    LSAT format research and the integration plan
 js/engine.js        spaced repetition, levels, session building, merge logic (no DOM)
 js/sync.js          optional Supabase sync (loads supabase-js from a CDN only when configured)
 js/app.js           the UI

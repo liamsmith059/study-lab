@@ -1,7 +1,7 @@
 :root {
   --bg: #f7f7f8; --paper: #ffffff; --text: #16181d; --muted: #555b66; --faint: #8a909b;
   --border: #e2e4e8; --border-strong: #c9ccd3; --accent: #2f6fed; --accent-ink: #ffffff; --accent-soft: #e8efff;
-  --ok: #157f3b; --ok-soft: #e6f5ec; --bad: #c22b2b; --bad-soft: #fdeaea; --info-soft: #eef2f8;
+  --ok: #157f3b; --ok-soft: #e6f5ec; --bad: #c22b2b; --bad-soft: #fdeaea; --info-soft: #eef2f8; --warn: #a15c00;
   --radius: 14px; --radius-sm: 9px;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light dark;
@@ -10,7 +10,7 @@
   :root {
     --bg: #111214; --paper: #1a1c20; --text: #eceef2; --muted: #a8aeb9; --faint: #7d8390;
     --border: #2b2e35; --border-strong: #3b3f48; --accent: #5b8cff; --accent-ink: #0b1020; --accent-soft: #1d2840;
-    --ok: #4cc77a; --ok-soft: #15301f; --bad: #ff6b6b; --bad-soft: #3a1a1c; --info-soft: #1f2530;
+    --ok: #4cc77a; --ok-soft: #15301f; --bad: #ff6b6b; --bad-soft: #3a1a1c; --info-soft: #1f2530; --warn: #f0a63a;
   }
 }
 * { box-sizing: border-box; }
@@ -99,6 +99,33 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
 .row input[type="email"] { flex: 1 1 220px; width: auto; min-height: 44px; }
 footer { text-align: center; margin-top: 24px; }
 @media (hover: none) { .hide-touch { display: none; } }
+
+/* ---------- LSAT ---------- */
+.wrap.wide { max-width: 1240px; }
+.split { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.passage { background: var(--paper); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 16px; position: sticky; top: 12px; }
+.passage > summary h2 { font-size: 1.05rem; }
+.passage-body { max-height: calc(100vh - 200px); overflow-y: auto; padding-right: 8px; overscroll-behavior: contain; }
+.passage-body p { line-height: 1.7; margin: 0 0 14px; max-width: 72ch; }
+.passage-body h4 { margin: 14px 0 6px; font-size: 0.95rem; color: var(--muted); }
+.passage-body h4:first-child { margin-top: 0; }
+.pn { display: inline-block; min-width: 1.6em; color: var(--faint); font-size: 0.75rem; font-weight: 700; vertical-align: 1px; }
+.stim { white-space: pre-line; line-height: 1.65; margin: 0 0 14px; padding: 12px 14px; background: var(--bg); border-left: 3px solid var(--border-strong); border-radius: 6px; }
+.question.stem { font-size: 1.05rem; font-weight: 650; line-height: 1.45; }
+.trap { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.trap strong { color: var(--warn) !important; }
+.pace { font-variant-numeric: tabular-nums; font-size: 0.85rem; color: var(--muted); margin: -2px 0 10px; }
+.pace.over { color: var(--warn); font-weight: 600; }
+.lsat-card h3 { margin-bottom: 4px; }
+@media (min-width: 1000px) {
+  .passage > summary { pointer-events: none; cursor: default; }
+  .passage > summary::after { content: none; }
+}
+@media (max-width: 999px) {
+  .split { display: block; }
+  .passage { position: static; }
+  .passage-body { max-height: none; overflow: visible; padding-right: 0; }
+}
 @media (max-width: 640px) {
   .wrap { padding-top: 16px; }
   h1 { font-size: 1.6rem; }
@@ -108,6 +135,8 @@ footer { text-align: center; margin-top: 24px; }
   .hbar { grid-template-columns: 1fr auto; }
   .hbar .htrack { grid-column: 1 / -1; grid-row: 2; }
   .question { font-size: 1.15rem; }
-  .choice .tag { white-space: normal; }
+  .choice { flex-wrap: wrap; }
+  .choice .opt { flex: 1 1 0; min-width: 0; }
+  .choice .tag { white-space: normal; flex-basis: 100%; padding-left: 28px; }
   .row .btn { flex: 1 1 auto; }
 }
