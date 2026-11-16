@@ -1,0 +1,7 @@
+{
+  "name": "study-lab-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node engine.test.mjs && node smoke.mjs" },
+  "devDependencies": { "playwright-core": "^1.50.0" }
+}
