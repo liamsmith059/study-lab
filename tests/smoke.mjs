@@ -40,7 +40,7 @@ async function answerRound(page) {
 
 try {
   // ---- local-only mode ----
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   const errors = watch(page);
   await page.goto(BASE);
@@ -62,6 +62,9 @@ try {
   const fb = await page.locator(".callout").innerText();
   check("feedback shown after answering", /Correct\.|Not quite\./.test(fb), JSON.stringify(fb.slice(0, 60)));
   check("correct answer highlighted", (await page.locator(".choice.correct").count()) === 1);
+  await page.evaluate(() => document.fonts.ready);
+  check("theme fonts loaded (EB Garamond, Cormorant Garamond)", await page.evaluate(() => document.fonts.check('18px "EB Garamond"') && document.fonts.check('600 24px "Cormorant Garamond"')));
+  await page.screenshot({ path: path.join(here, "screenshot-laptop-quiz.png") });
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")));
   check("answering updates localStorage", saved && saved.total === 1 && Object.keys(saved.cards).length === 1, JSON.stringify(saved && saved.cards));
 
@@ -110,6 +113,8 @@ try {
   const lerr = watch(lp);
   await lp.goto(BASE);
   await lp.locator(".lsat-card").waitFor();
+  await lp.evaluate(() => document.fonts.ready);
+  await lp.screenshot({ path: path.join(here, "screenshot-laptop-home.png"), fullPage: true });
   await lp.locator('[data-arg="lsat-short:lsat"]').click();
   await lp.locator(".question.stem").waitFor();
   check("LSAT short: question 1 of 10", (await lp.locator("h2").first().innerText()).includes("1 of 10"));
@@ -158,9 +163,10 @@ try {
   const pFb = await lp.locator(".passage").boundingBox();
   check("LSAT long: passage panel still on screen with feedback open", pFb.y >= 0 && pFb.y + pFb.height <= 801, "y=" + pFb.y + " h=" + pFb.height);
   check("LSAT long: passage scroll kept after answering", (await lp.evaluate(() => document.querySelector(".passage-body").scrollTop)) > 50);
+  await lp.evaluate(() => { document.querySelector(".passage-body").scrollTop = 0; window.scrollTo(0, 0); });
+  await lp.screenshot({ path: path.join(here, "screenshot-laptop-lsat-passage.png") });
   await lp.locator('[data-action="next"]').click();
   check("LSAT long: same passage on question 2", (await lp.locator(".passage").count()) === 1);
-  await lp.screenshot({ path: path.join(here, "screenshot-laptop-lsat-passage.png") });
   await lp.locator('[data-action="end"]').click();
 
   // pace timer: counts up, never ends the question
@@ -193,6 +199,7 @@ try {
   await pp.locator(".subject").first().waitFor();
   const overflow = await pp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   check("phone: no horizontal overflow on home", overflow <= 0, "overflow=" + overflow);
+  await pp.evaluate(() => document.fonts.ready);
   await pp.screenshot({ path: path.join(here, "screenshot-phone-home.png"), fullPage: false });
   await pp.locator('[data-arg="subject:hist"]').tap();
   await pp.locator(".choice").first().tap();
@@ -207,6 +214,8 @@ try {
   const ppBox = await pp.locator(".passage").boundingBox();
   const pqBox = await pp.locator(".split > div > .card").boundingBox();
   check("phone LSAT: passage stacked above the question", ppBox.y + ppBox.height <= pqBox.y + 1);
+  await pp.evaluate(() => document.fonts.ready);
+  await pp.screenshot({ path: path.join(here, "screenshot-phone-lsat-passage.png") });
   await pp.locator(".passage > summary").tap();
   check("phone LSAT: passage folds away", (await pp.evaluate(() => document.getElementById("passage").open)) === false);
   await pp.locator(".choice").first().tap();
