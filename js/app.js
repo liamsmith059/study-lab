@@ -2,6 +2,7 @@ import {
   SUBJECTS, CORE_KEYS, QUESTIONS, QMAP, INTERVALS, SIZE, STORAGE_KEY, DIFF, LETTERS, PASSAGES, PACE, LSAT_META, TOTAL_QUESTIONS,
   emptyStore, normalize, streakOf, levelOf, levelHint, buildSession, buildLsatSession, choiceOrder, passageIds,
   applyAnswer, subjectStats, whenText, encodeBackup, decodeBackup, loadLsat, dueCounts, weakestTopic, dayKey,
+  typeOf, TYPE_LABEL, gradeTyped, gradeOrder, gradeMatch, answerText,
 } from "./engine.js";
 import { createSync, syncConfigured, authInUrl } from "./sync.js";
 import { initMenu, tagSections, scrollToSection } from "./menu.js";
@@ -121,7 +122,7 @@ async function start(mode, keys, opts = {}) {
     state.lsatMsg = "";
   }
   const topicFilter = opts.topic ? (q) => q.t === opts.topic : null;
-  const ids = lsat ? buildLsatSession(state.store, mode.slice(5)) : buildSession(state.store, keys, mode === "topic" ? "subject" : mode, Date.now(), topicFilter);
+  const ids = opts.ids ? opts.ids.filter((id) => QMAP[id]) : lsat ? buildLsatSession(state.store, mode.slice(5)) : buildSession(state.store, keys, mode === "topic" ? "subject" : mode, Date.now(), topicFilter);
   if (!ids.length) return;
   const startLevels = {};
   keys.forEach((k) => { startLevels[k] = levelOf(state.store, k); });
@@ -134,7 +135,7 @@ async function start(mode, keys, opts = {}) {
   } catch (err) { /* sandboxed frames may block history; the app still works */ }
   state.sess = {
     mode, keys, title, topic: opts.topic || "", idx: 0, picked: null, results: [], startLevels, retries: 0, total: ids.length,
-    items: ids.map((id) => ({ qid: id, order: choiceOrder(QMAP[id]), retry: false, kind: state.store.cards[id] ? "Review" : "New" })),
+    items: ids.map((id) => newItem(id, false, state.store.cards[id] ? "Review" : "New")),
   };
   state.conf = "unsure";
   state.view = "quiz";
@@ -168,22 +169,139 @@ function beginQuestion() {
   if (q.p !== state.passageKey) { state.passageKey = q.p; state.passageOpen = false; sess.pStart = now; }
 }
 
+// One question in a round. `order` is the display order (choices, ordering items or matching meanings);
+// `work` holds an in-progress answer for the practice formats (typed text, matches made so far).
+function newItem(qid, retry, kind) {
+  const q = QMAP[qid];
+  const type = typeOf(q);
+  const item = { qid, order: choiceOrder(q), retry, kind };
+  if (type === "typed" || type === "explain") item.work = { text: "", shown: false };
+  else if (type === "match") item.work = { pairs: q.pairs.map(() => -1), sel: null, msg: "" };
+  else if (type === "order") item.work = { msg: "" };
+  return item;
+}
+const current = () => state.sess && state.sess.items[state.sess.idx];
+
+// Multiple choice by index (clicks and the 1-5 / A-E keys). For an explain-why question whose model
+// answer is showing, 1 / 2 / 3 grade it instead.
 function answer(i) {
   const sess = state.sess;
   if (!sess || sess.picked !== null) return;
   const item = sess.items[sess.idx];
-  if (i >= item.order.length) return;
   const q = QMAP[item.qid];
-  const correct = item.order[i] === q.c[0];
+  const type = typeOf(q);
+  if (type === "explain") { if (item.work.shown && i < 3) selfGrade(["got", "partly", "missed"][i]); return; }
+  if (type !== "mc" || i >= item.order.length) return;
+  record(item.order[i] === q.c[0], state.conf, i);
+}
+
+// Record an answer of any format: spaced-repetition card, round results, and a second try later in the round if missed.
+function record(correct, conf, picked) {
+  const sess = state.sess;
+  const item = sess.items[sess.idx];
+  const q = QMAP[item.qid];
   if (!correct && !item.retry && sess.retries < 3) {
-    sess.items.splice(Math.min(sess.idx + 4, sess.items.length), 0, { qid: item.qid, order: choiceOrder(q), retry: true, kind: "Second try" });
+    item.retryItem = newItem(item.qid, true, "Second try");
+    sess.items.splice(Math.min(sess.idx + 4, sess.items.length), 0, item.retryItem);
     sess.retries++;
   }
-  sess.picked = i;
+  sess.picked = picked;
   sess.qEnd = Date.now();
-  sess.results.push({ qid: item.qid, correct, retry: item.retry, conf: state.conf });
-  if (!item.retry) setStore(applyAnswer(state.store, q, correct, state.conf, Date.now()));
+  item.conf = conf;
+  sess.results.push({ qid: item.qid, correct, retry: item.retry, conf });
+  if (!item.retry) { item.before = state.store; setStore(applyAnswer(state.store, q, correct, conf, Date.now())); }
   render(false, "next");
+}
+
+function submitTyped() {
+  const item = current();
+  if (!item || state.sess.picked !== null || typeOf(QMAP[item.qid]) !== "typed") return;
+  const el = document.getElementById("typed-input");
+  item.work.text = el ? el.value : item.work.text;
+  item.work.result = gradeTyped(QMAP[item.qid], item.work.text);
+  record(item.work.result.correct, state.conf, -1);
+}
+// "I was right, count it": the learner overrules the typed-answer grader (synonyms, other wordings).
+function overrideTyped() {
+  const sess = state.sess, item = current();
+  if (!item || !item.work || !item.work.result || item.work.result.correct) return;
+  item.work.result = { ...item.work.result, correct: true, overridden: true };
+  sess.results[sess.results.length - 1].correct = true;
+  if (item.retryItem) {
+    const k = sess.items.indexOf(item.retryItem);
+    if (k > sess.idx) { sess.items.splice(k, 1); sess.retries--; }
+    item.retryItem = null;
+  }
+  if (!item.retry && item.before) setStore(applyAnswer(item.before, QMAP[item.qid], true, item.conf, Date.now()));
+  render(false, "next");
+}
+function revealExplain() {
+  const item = current();
+  if (!item || state.sess.picked !== null || typeOf(QMAP[item.qid]) !== "explain") return;
+  const el = document.getElementById("explain-input");
+  if (el) item.work.text = el.value;
+  item.work.shown = true;
+  render(false, "grade");
+}
+// Self-grading an explanation: "Partly" counts as right but at guess strength, so it isn't promoted.
+function selfGrade(g) {
+  const item = current();
+  if (!item || !item.work.shown || state.sess.picked !== null) return;
+  item.work.grade = g;
+  record(g !== "missed", g === "partly" ? "guess" : "unsure", -1);
+}
+function moveItem(arg) {
+  const item = current();
+  if (!item || state.sess.picked !== null) return;
+  const q = QMAP[item.qid];
+  const [v, dir] = arg.split(":");
+  const o = item.order, i = o.indexOf(Number(v)), j = dir === "up" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= o.length) return;
+  [o[i], o[j]] = [o[j], o[i]];
+  item.work.msg = `${q.items[v]}: now ${j + 1} of ${o.length}.`;
+  render(false);
+  // Keep focus on the item that moved; at the top or bottom its arrow is disabled, so use the other one.
+  let b = root.querySelector(`[data-action="move"][data-arg="${v}:${dir}"]`);
+  if (!b || b.disabled) b = root.querySelector(`[data-action="move"][data-arg="${v}:${dir === "up" ? "down" : "up"}"]`);
+  if (b) b.focus({ preventScroll: true });
+}
+function checkOrder() {
+  const item = current();
+  if (!item || state.sess.picked !== null) return;
+  item.work.result = gradeOrder(QMAP[item.qid], item.order);
+  record(item.work.result.correct, state.conf, -1);
+}
+// Tap-to-pair matching: choose a term then a meaning (or the other way round). Choosing a new
+// meaning for a term replaces its old one; a meaning can only belong to one term.
+function pickMatch(arg) {
+  const item = current();
+  if (!item || state.sess.picked !== null) return;
+  const q = QMAP[item.qid], w = item.work;
+  const [side, n] = arg.split(":"); const idx = Number(n);
+  const pair = (t, m) => {
+    for (let k = 0; k < w.pairs.length; k++) if (w.pairs[k] === m) w.pairs[k] = -1;
+    w.pairs[t] = m; w.sel = null;
+    w.msg = `Matched ${q.pairs[t][0]} with ${q.pairs[m][1]}.`;
+  };
+  const other = side === "L" ? "R" : "L";
+  if (w.sel && w.sel.side === other) { if (side === "L") pair(idx, w.sel.i); else pair(w.sel.i, idx); }
+  else if (w.sel && w.sel.side === side && w.sel.i === idx) { w.sel = null; w.msg = "Selection cleared."; }
+  else { w.sel = { side, i: idx }; w.msg = side === "L" ? `${q.pairs[idx][0]} selected. Now choose its meaning.` : `Selected: ${q.pairs[idx][1]}. Now choose its term.`; }
+  render(false, "keep");
+}
+function clearMatch() {
+  const item = current();
+  if (!item || state.sess.picked !== null) return;
+  item.work.pairs = item.work.pairs.map(() => -1); item.work.sel = null; item.work.msg = "All matches cleared.";
+  render(false);
+  const first = root.querySelector('[data-action="pick"]');
+  if (first) first.focus({ preventScroll: true });
+}
+function checkMatch() {
+  const item = current();
+  if (!item || state.sess.picked !== null) return;
+  item.work.result = gradeMatch(QMAP[item.qid], item.work.pairs);
+  record(item.work.result.correct, state.conf, -1);
 }
 
 function next() {
@@ -214,6 +332,15 @@ const actions = {
   topic: (arg) => { const [s, t] = arg.split("|"); start("topic", [s], { topic: t }); },
   passage: () => togglePassage(),
   answer: (arg) => answer(Number(arg)),
+  submit: () => submitTyped(),
+  override: () => overrideTyped(),
+  reveal: () => revealExplain(),
+  grade: (arg) => selfGrade(arg),
+  move: (arg) => moveItem(arg),
+  checkorder: () => checkOrder(),
+  pick: (arg) => pickMatch(arg),
+  clearmatch: () => clearMatch(),
+  checkmatch: () => checkMatch(),
   next,
   conf: (arg) => { state.conf = arg; render(); },
   end: () => { if (state.sess && state.sess.results.length) finishRound(); else goHome(); },
@@ -265,36 +392,29 @@ const actions = {
 };
 
 // ---------- views ----------
+// When a question comes back, written into the feedback after an answer.
+function followText(item, right) {
+  if (item.retry) return "";
+  const card = state.store.cards[item.qid];
+  if (!right) return " You'll see this again later in this round and " + whenText(INTERVALS[1]) + ".";
+  return item.conf === "guess"
+    ? " It comes back " + whenText(INTERVALS[card ? card.b : 1]) + " to firm it up."
+    : " Next review " + whenText(INTERVALS[card ? card.b : 2]) + ".";
+}
+
 function quizView() {
   const sess = state.sess;
   const item = sess.items[sess.idx];
   const q = QMAP[item.qid];
+  const type = typeOf(q);
   const revealed = sess.picked !== null;
-  const correctIdx = item.order.indexOf(q.c[0]);
-  const wasRight = revealed && sess.picked === correctIdx;
-  const card = state.store.cards[q.id];
   const last = sess.idx + 1 >= sess.items.length;
-  const letters = LETTERS;
-  const choices = item.order.map((opt, i) => {
-    let cls = "choice", tag = "";
-    if (revealed && i === correctIdx) { cls += " correct"; tag = i === sess.picked ? "Your answer, correct" : "Correct answer"; }
-    else if (revealed && i === sess.picked) { cls += " wrong"; tag = "Your answer"; }
-    else if (revealed) cls += " dim";
-    return `<button class="${cls}" data-action="answer" data-arg="${i}"${revealed ? " disabled" : ""}>
-      <span class="letter">${letters[i]}</span><span class="opt">${esc(opt)}</span>${tag ? `<span class="tag">${esc(tag)}</span>` : ""}</button>`;
-  }).join("");
-  let feedback = "";
-  if (revealed) {
-    let follow = "";
-    if (!item.retry) {
-      follow = wasRight
-        ? (state.conf === "guess" ? " You marked this as a guess, so it comes back " + whenText(INTERVALS[card ? card.b : 1]) + "." : " Next review " + whenText(INTERVALS[card ? card.b : 2]) + ".")
-        : " You'll see this again later in this round and " + whenText(INTERVALS[1]) + ".";
-    }
-    feedback = `<div class="callout ${wasRight ? "success" : "danger"}" role="status" id="feedback">
-      <strong>${wasRight ? "Correct. The answer is (" + letters[correctIdx] + ")." : "Not quite. The answer is (" + letters[correctIdx] + ")" + (q.fixed ? "." : ": " + esc(q.c[0]) + ".")}</strong> ${esc(q.e)}${esc(follow)}
-      ${trapLine(q, item, sess.picked)}</div>`;
-  }
+  let main = "", feedback = "", tip = "";
+  if (type === "mc") ({ main, feedback, tip } = mcBody(q, item, revealed));
+  else if (type === "typed") ({ main, feedback, tip } = typedBody(q, item, revealed));
+  else if (type === "explain") ({ main, feedback, tip } = explainBody(q, item, revealed));
+  else if (type === "order") ({ main, feedback, tip } = orderBody(q, item, revealed));
+  else if (type === "match") ({ main, feedback, tip } = matchBody(q, item, revealed));
   const confs = [["sure", "Sure"], ["unsure", "Think so"], ["guess", "Guessing"]];
   // The counter tracks the round's original questions only; second tries are labelled, not counted.
   const total = sess.total;
@@ -303,21 +423,157 @@ function quizView() {
   const count = item.retry
     ? `<span class="count" aria-hidden="true">Second try · ${doneFirst} / ${total} done</span><span class="sr-only">Second try. ${doneFirst} of ${total} done.</span>`
     : `<span class="count" aria-hidden="true">${pos} / ${total}</span><span class="sr-only">Question ${pos} of ${total}</span>`;
-  const kicker = [sess.title, sess.keys.length > 1 ? subjName(q.s) : "", q.t, DIFF[q.d], item.kind].filter(Boolean).join(" · ");
+  const format = TYPE_LABEL[type] || (q.p && q.s !== "lsat" ? "Reading" : "");
+  const kicker = [sess.title, sess.keys.length > 1 ? subjName(q.s) : "", q.t, format, DIFF[q.d], item.kind].filter(Boolean).join(" · ");
+  // Explain-why rates itself after the model answer, so it skips the confidence question.
+  const askConf = !revealed && type !== "explain";
+  const stemCls = q.s === "lsat" || type === "explain" || q.q.length > 110 ? " stem" : "";
   const body = `
-  <section class="quiz">
+  <section class="quiz quiz-${type}">
     <p class="kicker">${esc(kicker)}</p>
     <div class="quiz-progress">${count}${bar(doneFirst / total)}</div>
     ${paceLine(q)}
     ${q.stim ? `<div class="stim">${esc(q.stim)}</div>` : ""}
-    <h1 class="question${q.s === "lsat" ? " stem" : ""}" id="q-stem" tabindex="-1">${esc(q.q)}</h1>
-    ${revealed ? "" : `<div class="conf"><p class="muted">How sure are you? Guesses come back sooner even if right.</p>
-      <div class="segmented" role="group" aria-label="Confidence">${confs.map(([v, l]) => `<button class="${state.conf === v ? "on" : ""}" data-action="conf" data-arg="${v}" aria-pressed="${state.conf === v}">${l}</button>`).join("")}</div></div>`}
-    <div class="choices">${choices}</div>
-    ${revealed ? feedback : `<p class="small muted hide-touch">Tip: press 1 to ${item.order.length} (or A to ${letters[item.order.length - 1]}) to answer, then Enter for the next question.</p>`}
+    <h1 class="question${stemCls}" id="q-stem" tabindex="-1">${esc(q.q)}</h1>
+    ${askConf ? `<div class="conf"><p class="muted">How sure are you? Guesses come back sooner even if right.</p>
+      <div class="segmented" role="group" aria-label="Confidence">${confs.map(([v, l]) => `<button class="${state.conf === v ? "on" : ""}" data-action="conf" data-arg="${v}" aria-pressed="${state.conf === v}">${l}</button>`).join("")}</div></div>` : ""}
+    ${main}
+    ${revealed ? feedback : tip ? `<p class="small muted hide-touch">${tip}</p>` : ""}
     <div class="actions start">${revealed ? btn(last ? "See results" : "Next question", "next", { primary: true, describedby: "feedback" }) : ""}${btn("End round", "end")}</div>
   </section>`;
   return q.p ? `<div class="split">${passageBar(q)}${passagePanel(q.p)}<div class="split-main">${body}</div></div>` : body;
+}
+
+function mcBody(q, item, revealed) {
+  const sess = state.sess;
+  const correctIdx = item.order.indexOf(q.c[0]);
+  const wasRight = revealed && sess.picked === correctIdx;
+  const choices = item.order.map((opt, i) => {
+    let cls = "choice", tag = "";
+    if (revealed && i === correctIdx) { cls += " correct"; tag = i === sess.picked ? "Your answer, correct" : "Correct answer"; }
+    else if (revealed && i === sess.picked) { cls += " wrong"; tag = "Your answer"; }
+    else if (revealed) cls += " dim";
+    return `<button class="${cls}" data-action="answer" data-arg="${i}"${revealed ? " disabled" : ""}>
+      <span class="letter">${LETTERS[i]}</span><span class="opt">${esc(opt)}</span>${tag ? `<span class="tag">${esc(tag)}</span>` : ""}</button>`;
+  }).join("");
+  const feedback = revealed ? `<div class="callout ${wasRight ? "success" : "danger"}" role="status" id="feedback">
+      <strong>${wasRight ? "Correct. The answer is (" + LETTERS[correctIdx] + ")." : "Not quite. The answer is (" + LETTERS[correctIdx] + ")" + (q.fixed ? "." : ": " + esc(q.c[0]) + ".")}</strong> ${esc(q.e)}${esc(followText(item, wasRight))}
+      ${trapLine(q, item, sess.picked)}</div>` : "";
+  const n = item.order.length;
+  return { main: `<div class="choices">${choices}</div>`, feedback, tip: `Tip: press 1 to ${n} (or A to ${LETTERS[n - 1]}) to answer, then Enter for the next question.` };
+}
+
+function typedBody(q, item, revealed) {
+  const w = item.work, r = w.result;
+  const state2 = revealed ? (r.correct ? " ok" : " bad") : "";
+  const main = `<div class="typed">
+      <label for="typed-input" class="small muted">Your answer</label>
+      <div class="typed-row"><input id="typed-input" class="typed-input${state2}" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"
+        value="${esc(w.text)}" aria-describedby="q-stem"${revealed ? " readonly" : ""}>${revealed ? "" : btn("Check", "submit", { primary: true })}</div>
+    </div>`;
+  let feedback = "";
+  if (revealed) {
+    const others = typeof q.num !== "number" && q.a.length > 1 ? ` <span class="small muted">Also accepted: ${esc(q.a.slice(1, 4).join(", "))}.</span>` : "";
+    let head;
+    if (r.overridden) head = `<strong>Counted as right.</strong> The expected answer was <strong>${esc(q.a[0])}</strong>.`;
+    else if (r.correct && r.close) head = `<strong>Correct, allowing for spelling.</strong> It's spelled <strong>${esc(q.a[0])}</strong>.`;
+    else if (r.correct) head = `<strong>Correct: ${esc(q.a[0])}.</strong>`;
+    else head = `<strong>${r.blank ? "No answer this time." : "Not quite."} The answer is ${esc(q.a[0])}.</strong>${others}`;
+    const over = !r.correct && !r.blank
+      ? `<div class="row override">${btn("I was right, count it", "override", { cls: "btn-small" })}<span class="small muted">If your answer means the same thing, count it. Be honest; it only helps you.</span></div>` : "";
+    feedback = `<div class="callout ${r.correct ? "success" : "danger"}" role="status" id="feedback">${head} ${esc(q.e)}${esc(followText(item, r.correct))}${over}</div>`;
+  }
+  return { main, feedback, tip: "Tip: start typing from anywhere and press Enter to check. Small typos are fine." };
+}
+
+function explainBody(q, item, revealed) {
+  const w = item.work;
+  if (!w.shown) {
+    return {
+      main: `<div class="explain">
+        <label for="explain-input" class="small muted">Your explanation</label>
+        <textarea id="explain-input" class="explain-input" rows="4" aria-describedby="q-stem explain-hint" placeholder="Explain it in your own words">${esc(w.text)}</textarea>
+        <p id="explain-hint" class="small muted">Write a sentence or two from memory, then compare it with a model answer. Even a rough attempt helps you remember.</p>
+        <div class="actions start">${btn("Show model answer", "reveal", { primary: true })}</div>
+      </div>`, feedback: "", tip: "Tip: Ctrl+Enter (⌘+Enter on a Mac) shows the model answer.",
+    };
+  }
+  const grades = [["got", "I had it", "1"], ["partly", "Partly", "2"], ["missed", "Missed it", "3"]];
+  const mine = w.text.trim() ? `<div class="mine"><p class="kicker">You wrote</p><p>${esc(w.text)}</p></div>` : `<div class="mine"><p class="kicker">You wrote</p><p class="muted">(nothing this time)</p></div>`;
+  const model = `<div class="model" id="model"><p class="kicker">Model answer</p><p>${esc(q.a)}</p>
+      <p class="small muted kp-head">Key points to check yours against</p><ul class="keypoints">${q.k.map((k) => `<li>${esc(k)}</li>`).join("")}</ul></div>`;
+  const ask = revealed ? "" : `<div class="self-grade"><p id="grade-q"><strong>How did yours compare?</strong> <span class="muted">Partly counts as a guess, so it comes back sooner.</span></p>
+      <div class="grade-row" role="group" aria-labelledby="grade-q">${grades.map(([v, l, k]) => `<button class="btn grade-btn" data-action="grade" data-arg="${v}" aria-describedby="model"><span class="key" aria-hidden="true">${k}</span>${l}</button>`).join("")}</div></div>`;
+  let feedback = "";
+  if (revealed) {
+    const g = w.grade;
+    const head = g === "got" ? "Nice. Explaining it from memory makes it stick." : g === "partly" ? "Partly: worth another look soon." : "No problem: now you've seen the full explanation.";
+    feedback = `<div class="callout ${g === "got" ? "success" : g === "partly" ? "info" : "danger"}" role="status" id="feedback"><strong>${esc(head)}</strong> ${esc(q.e)}${esc(followText(item, g !== "missed"))}</div>`;
+  }
+  return { main: mine + model + ask, feedback, tip: "Tip: press 1, 2 or 3 to grade yourself." };
+}
+
+function orderBody(q, item, revealed) {
+  const rows = item.order.map((v, pos) => {
+    const txt = q.items[v];
+    const ok = v === pos;
+    const res = revealed ? `<span class="order-tag">${ok ? "✓ Right place" : "Goes " + ordinal(v + 1)}</span>` : "";
+    const moves = revealed ? "" : `<span class="order-moves">
+        <button class="move" data-action="move" data-arg="${v}:up" aria-label="Move ${esc(txt)} up"${pos === 0 ? " disabled" : ""}><span aria-hidden="true">↑</span></button>
+        <button class="move" data-action="move" data-arg="${v}:down" aria-label="Move ${esc(txt)} down"${pos === item.order.length - 1 ? " disabled" : ""}><span aria-hidden="true">↓</span></button></span>`;
+    return `<li class="order-row${revealed ? (ok ? " ok" : " bad") : ""}"><span class="order-pos" aria-hidden="true">${pos + 1}</span><span class="order-text">${esc(txt)}</span>${res}${moves}</li>`;
+  }).join("");
+  const main = `<p id="order-help" class="small muted order-help">${revealed ? "Your order:" : "Use the arrows to move each item. The top is first."}</p>
+    <ol class="order-list" aria-describedby="order-help">${rows}</ol>
+    <p class="sr-only" aria-live="polite" id="order-status">${esc(item.work.msg || "")}</p>
+    ${revealed ? "" : `<div class="actions start">${btn("Check order", "checkorder", { primary: true })}</div>`}`;
+  let feedback = "";
+  if (revealed) {
+    const r = item.work.result;
+    feedback = `<div class="callout ${r.correct ? "success" : "danger"}" role="status" id="feedback">
+      <strong>${r.correct ? "Correct order." : `Not quite: ${r.right} of ${q.items.length} in the right place.`}</strong>
+      ${r.correct ? "" : `<ol class="answer-list">${q.items.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>`}${esc(q.e)}${esc(followText(item, r.correct))}</div>`;
+  }
+  return { main, feedback, tip: "" };
+}
+const ordinal = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+
+function matchBody(q, item, revealed) {
+  const w = item.work;
+  if (revealed) {
+    const rows = q.pairs.map(([t, m], i) => {
+      const got = w.pairs[i];
+      const ok = got === i;
+      return `<li class="match-done ${ok ? "ok" : "bad"}"><span class="match-term">${esc(t)}</span><span class="match-mean">${ok ? "✓ " + esc(m) : `<span class="was">${got >= 0 ? esc(q.pairs[got][1]) : "(no match)"}</span><span class="fix">${esc(m)}</span>`}</span></li>`;
+    }).join("");
+    const r = w.result;
+    return {
+      main: `<ul class="match-results">${rows}</ul>`, tip: "",
+      feedback: `<div class="callout ${r.correct ? "success" : "danger"}" role="status" id="feedback"><strong>${r.correct ? "All matched." : `${r.right} of ${q.pairs.length} matched correctly.`}</strong> ${esc(q.e)}${esc(followText(item, r.correct))}</div>`,
+    };
+  }
+  const termOf = (m) => w.pairs.indexOf(m);
+  const terms = q.pairs.map(([t], i) => {
+    const sel = w.sel && w.sel.side === "L" && w.sel.i === i;
+    const m = w.pairs[i];
+    return `<li><button class="match-item${sel ? " sel" : ""}${m >= 0 ? " paired" : ""}" data-action="pick" data-arg="L:${i}" aria-pressed="${sel}"
+      aria-label="${esc(t)}${m >= 0 ? ", matched with " + esc(q.pairs[m][1]) : ""}"><span class="badge" aria-hidden="true">${i + 1}</span><span class="mi-text">${esc(t)}</span></button></li>`;
+  }).join("");
+  const means = item.order.map((m) => {
+    const sel = w.sel && w.sel.side === "R" && w.sel.i === m;
+    const t = termOf(m);
+    return `<li><button class="match-item mean${sel ? " sel" : ""}${t >= 0 ? " paired" : ""}" data-action="pick" data-arg="R:${m}" aria-pressed="${sel}"
+      aria-label="${esc(q.pairs[m][1])}${t >= 0 ? ", matched with " + esc(q.pairs[t][0]) : ""}"><span class="badge${t >= 0 ? "" : " empty"}" aria-hidden="true">${t >= 0 ? t + 1 : ""}</span><span class="mi-text">${esc(q.pairs[m][1])}</span></button></li>`;
+  }).join("");
+  const done = w.pairs.every((m) => m >= 0);
+  const main = `<p class="small muted match-help" id="match-help">Choose a term, then the meaning that goes with it. Matched pairs share a number.</p>
+    <div class="match" aria-describedby="match-help">
+      <div class="match-col"><p class="match-head" id="match-terms">Terms</p><ul class="match-list" aria-labelledby="match-terms">${terms}</ul></div>
+      <div class="match-col"><p class="match-head" id="match-means">Meanings</p><ul class="match-list" aria-labelledby="match-means">${means}</ul></div>
+    </div>
+    <p class="sr-only" aria-live="polite" id="match-status">${esc(w.msg || "")}</p>
+    <div class="actions start">${btn(done ? "Check matches" : "Check matches (" + w.pairs.filter((m) => m >= 0).length + " of " + q.pairs.length + ")", "checkmatch", { primary: true, disabled: !done })}${w.pairs.some((m) => m >= 0) ? btn("Clear", "clearmatch") : ""}</div>`;
+  return { main, feedback: "", tip: "" };
 }
 
 // Phones and narrow windows: a compact bar that sticks to the top while reading a passage set.
@@ -411,9 +667,9 @@ function summaryView() {
   else if (downs.length) note = `<div class="callout info"><strong>Easing off.</strong> ${esc(downs.map(subjName).join(" and "))} dropped a level, so you'll get more foundation questions until accuracy recovers.</div>`;
   const missedList = missed.map((r) => {
     const q = QMAP[r.qid];
-    const ans = q.fixed ? `(${LETTERS[q.fixed.indexOf(q.c[0])]}) ${esc(q.c[0])}` : esc(q.c[0]) + ".";
-    const ctx = q.fixed ? `<div class="small muted">${esc(q.stim ? trunc(q.stim, 160) : "Passage: " + PASSAGES[q.p].title)}</div>` : "";
-    return `<li>${ctx}<div class="mq">${esc(q.q)}</div><div class="small"><strong>Answer: ${ans}</strong> ${esc(q.e)}</div><div class="small muted">${esc(subjName(q.s) + " · " + q.t)}</div></li>`;
+    const ans = q.fixed ? `(${LETTERS[q.fixed.indexOf(q.c[0])]}) ${esc(q.c[0])}` : esc(answerText(q)) + (/[.?!]$/.test(answerText(q)) ? "" : ".");
+    const ctx = q.fixed ? `<div class="small muted">${esc(q.stim ? trunc(q.stim, 160) : "Passage: " + PASSAGES[q.p].title)}</div>` : q.p ? `<div class="small muted">${esc("Passage: " + PASSAGES[q.p].title)}</div>` : "";
+    return `<li>${ctx}<div class="mq">${esc(q.q)}</div><div class="small"><strong>Answer: ${ans}</strong> ${esc(q.e)}</div><div class="small muted">${esc([subjName(q.s), q.t, TYPE_LABEL[typeOf(q)]].filter(Boolean).join(" · "))}</div></li>`;
   }).join("");
   return `
   <section class="hero compact"><h1 tabindex="-1">Round complete</h1><p class="lede">${esc(sess.title)}: here is how you did and what comes back next.</p></section>
@@ -520,6 +776,7 @@ function homeView() {
     ["Interleaving", "Mixed review and Due review alternate subjects, which feels harder but builds more durable, flexible knowledge."],
     ["LSAT section", "Answers stay in fixed A–E order like the real test, passages stay beside the questions on wide screens, every question names its most tempting wrong answer, and an optional timer shows real-test pace. LSAT stays out of Mixed review."],
     ["Second tries", "A missed question returns a few questions later in the same round so you fix it while the explanation is fresh."],
+    ["Question formats", "About three in ten new questions use a format other than multiple choice: Recall (type the answer, with small typos allowed and an \"I was right\" override), Explain why (write it in your own words, then grade yourself against a model answer), Put in order, Match, and short Reading passages in every subject. Producing and explaining an answer builds stronger memory than recognising it."],
   ];
   // First visit: open on wide screens, folded to a one-line teaser on phones. After that, the reader's choice sticks.
   const howOpen = state.howOpen === null ? st.total === 0 && !narrowScreen() : state.howOpen;
@@ -571,11 +828,11 @@ function homeView() {
 
 function lsatCard(st, now) {
   const ss = subjectStats(st, "lsat", now);
-  const { lr, rc, sets } = LSAT_META;
+  const { lr, rc, sets, x } = LSAT_META;
   return `<article class="card panel lsat-card" aria-labelledby="lsat-title">
     <p class="kicker">LSAT prep · Level ${levelOf(st, "lsat")} of 3 · ${ss.seen}/${ss.total} seen · ${ss.mastered} mastered${ss.due ? ` · <span class="due">${ss.due} due</span>` : ""}</p>
     <h2 id="lsat-title">Original practice in the style of the current test.</h2>
-    <p class="lead">${lr} Logical Reasoning arguments and ${sets} Reading Comprehension passage sets (${rc} questions) across law, science, humanities and social science. Five choices, A to E.</p>
+    <p class="lead">${lr} Logical Reasoning arguments and ${sets} Reading Comprehension passage sets (${rc} questions) across law, science, humanities and social science, five choices, A to E. Short rounds also mix in ${x} skill drills: conditional logic you type out, flaws you explain, chains you order and terms you match.</p>
     ${ss.seen ? bar(ss.mastery) : ""}
     <p class="small muted">${esc(levelHint(st, "lsat"))}</p>
     <div class="actions start">
@@ -664,6 +921,7 @@ function placeFocus(focus, had) {
   if (focus === "stem") el = document.getElementById("q-stem");
   else if (focus === "next") el = root.querySelector('[data-action="next"]');
   else if (focus === "h1") el = root.querySelector("h1");
+  else if (focus === "grade") el = root.querySelector('[data-action="grade"]');
   if (!el && had) {
     if (had.id) el = document.getElementById(had.id);
     if (!el && had.cls) el = root.querySelector(".passage-toggle");
@@ -704,12 +962,21 @@ root.addEventListener("input", (e) => {
 root.addEventListener("focusin", (e) => { if (e.target.id === "email") sync.ensure(); });
 root.addEventListener("keydown", (e) => {
   if (e.target.id === "email" && e.key === "Enter") { e.preventDefault(); actions.signin(); }
+  if (e.target.id === "typed-input" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); submitTyped(); }
+  if (e.target.id === "explain-input" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); revealExplain(); }
+});
+root.addEventListener("input", (e) => {
+  const item = current();
+  if (item && item.work && (e.target.id === "typed-input" || e.target.id === "explain-input")) item.work.text = e.target.value;
 });
 window.addEventListener("keydown", (e) => {
   if (state.view !== "quiz" || !state.sess) return;
   if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (state.sess.picked === null) {
+    // Typed recall: typing anywhere on the page goes into the answer box.
+    const inp = document.getElementById("typed-input");
+    if (inp && !inp.readOnly && e.key.length === 1 && e.key !== " ") { inp.focus(); return; }
     const map = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, a: 0, b: 1, c: 2, d: 3, e: 4 };
     const k = e.key.toLowerCase();
     if (map[k] !== undefined) { e.preventDefault(); answer(map[k]); }
@@ -768,4 +1035,5 @@ menu = initMenu({
 render();
 routeOnLoad();
 sync.init();
-window.__studyLab = { state, QUESTIONS, QMAP, loadLsat, menu }; // handy for debugging in the console
+// start(mode, keys, { ids }) runs a round of chosen question ids (used by the tests and screenshots).
+window.__studyLab = { state, QUESTIONS, QMAP, loadLsat, menu, start, render }; // handy for debugging in the console

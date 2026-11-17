@@ -1,6 +1,7 @@
 // Pure study logic: storage shape, spaced repetition, adaptive levels, session building, merging.
 // No DOM access here, so it can be tested in Node.
 import { RAW } from "./questions.js";
+import { EXTRA, EXTRA_PASSAGES } from "./practice.js";
 // The LSAT bank (js/lsat.js, ~80 KB) is loaded on demand with loadLsat(), so the home page and the
 // core subjects don't pay for it. Until it loads, LSAT progress is still kept, counted and merged by id.
 
@@ -19,8 +20,15 @@ export const CORE_KEYS = SUBJECTS.filter((s) => !s.special).map((s) => s.key);
 export const LETTERS = ["A", "B", "C", "D", "E"];
 export const PASSAGES = {};
 // Size of the LSAT bank, known without loading it (checked against js/lsat.js by the tests).
-// IDs are "lsat0".."lsat49"; new items are only ever appended.
-export const LSAT_META = { total: 50, lr: 29, rc: 21, sets: 4 };
+// IDs are "lsat0".."lsat64"; new items are only ever appended. lr/rc count multiple-choice items,
+// x counts the recall / explain / order / match drills.
+export const LSAT_META = { total: 65, lr: 29, rc: 26, sets: 5, x: 10 };
+// Question formats. "mc" is the original multiple choice; the rest are the practice formats (js/practice.js).
+export const TYPES = ["mc", "typed", "explain", "order", "match"];
+export const TYPE_LABEL = { mc: "", typed: "Recall", explain: "Explain why", order: "Put in order", match: "Match" };
+export const typeOf = (q) => q.type || "mc";
+// The fields a practice-format entry carries over from its source.
+const practiceFields = (r) => ({ type: r.type, a: r.a, num: r.num, tol: r.tol, k: r.k, items: r.items, pairs: r.pairs });
 const LSAT_ID = /^lsat(\d+)$/;
 
 export const QUESTIONS = [];
@@ -29,6 +37,15 @@ for (const s of Object.keys(RAW)) {
     QUESTIONS.push({ id: s + i, s, d: r[0], t: r[1], q: r[2], c: r[3], e: r[4] });
   });
 }
+// Practice formats for the school subjects: ids "<subject>-x<index>", appended after the multiple-choice bank.
+for (const s of Object.keys(EXTRA)) {
+  EXTRA[s].forEach((r, i) => {
+    const q = { id: s + "-x" + i, s, d: r.d, t: r.t, q: r.q, e: r.e, ...practiceFields(r) };
+    if (r.type === "mc") { delete q.type; q.c = r.c; q.p = r.p; }
+    QUESTIONS.push(q);
+  });
+}
+Object.assign(PASSAGES, EXTRA_PASSAGES);
 export const QMAP = Object.fromEntries(QUESTIONS.map((q) => [q.id, q]));
 export const CORE_COUNT = QUESTIONS.length;
 export const TOTAL_QUESTIONS = CORE_COUNT + LSAT_META.total;
@@ -41,6 +58,12 @@ export function registerLsat(items, passages) {
   if (lsatLoaded()) return;
   Object.assign(PASSAGES, passages);
   items.forEach((r, i) => {
+    if (r.type) {
+      const q = { id: "lsat" + i, s: "lsat", d: r.d, t: r.t, q: r.q, e: r.e, len: "short", ...practiceFields(r) };
+      QUESTIONS.push(q);
+      QMAP[q.id] = q;
+      return;
+    }
     const fixed = r.c.slice(1);
     fixed.splice(LETTERS.indexOf(r.a), 0, r.c[0]);
     const q = {
@@ -72,9 +95,83 @@ export function idsOf(s) {
   return QUESTIONS.filter((q) => q.s === s).map((q) => q.id);
 }
 
-// Display order for a question's choices: fixed A-E for LSAT, shuffled for everything else.
+// Display order for a question: fixed A-E choices for LSAT, shuffled choices for other multiple choice,
+// a shuffled start (never already solved) for ordering, shuffled meanings (indexes) for matching.
 export function choiceOrder(q) {
+  const type = typeOf(q);
+  if (type === "order") {
+    const idx = q.items.map((_, i) => i);
+    let o = shuffle(idx);
+    for (let n = 0; n < 20 && o.every((v, i) => v === i); n++) o = shuffle(idx);
+    return o;
+  }
+  if (type === "match") return shuffle(q.pairs.map((_, i) => i));
+  if (type !== "mc") return [];
   return q.fixed ? q.fixed.slice() : shuffle(q.c);
+}
+
+// ---------- grading the practice formats (pure, so the tests can check them) ----------
+// Typed answers: ignore case, accents, punctuation, spacing and a leading article; allow a small typo.
+export function normAnswer(s) {
+  return String(s == null ? "" : s).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[\u2018\u2019`]/g, "'").replace(/[\u2212\u2013\u2014]/g, "-")
+    .replace(/[^a-z0-9'./%-]+/g, " ").replace(/[.]+(\s|$)/g, "$1").trim().replace(/^(the|a|an) /, "").replace(/\s+/g, " ");
+}
+// The last number written in an answer ("x = 6", "$1,102.50", "-2%", "1/6"), or null.
+export function parseNumber(s) {
+  const t = String(s == null ? "" : s).replace(/[\u2212\u2013\u2014]/g, "-").replace(/(\d),(?=\d{3}\b)/g, "$1").replace(/\$/g, "");
+  const all = t.match(/-?\d*\.?\d+(?:\s*\/\s*-?\d*\.?\d+)?/g);
+  if (!all) return null;
+  const last = all[all.length - 1];
+  const [a, b] = last.split("/").map((x) => parseFloat(x));
+  if (b === undefined) return a;
+  return b === 0 ? null : a / b;
+}
+export function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 3) return 99;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+// Returns { correct, close, blank }: close means accepted with a small spelling slip.
+export function gradeTyped(q, input) {
+  const raw = String(input == null ? "" : input);
+  if (!raw.trim()) return { correct: false, close: false, blank: true };
+  if (typeof q.num === "number") {
+    const v = parseNumber(raw);
+    const tol = typeof q.tol === "number" ? q.tol : 1e-9;
+    return { correct: v !== null && Math.abs(v - q.num) <= tol + 1e-12, close: false, blank: false };
+  }
+  const got = normAnswer(raw);
+  const accepted = q.a.map(normAnswer);
+  if (accepted.includes(got)) return { correct: true, close: false, blank: false };
+  // Small typos count on longer words ("mitocondria"), never on short ones where one letter changes the word (its / it's).
+  const near = accepted.some((x) => x.length >= 5 && editDistance(got, x) <= (x.length >= 9 ? 2 : 1));
+  return { correct: near, close: near, blank: false };
+}
+// Ordering: arr lists item indexes in the learner's order. Returns { correct, right: number in the right place }.
+export function gradeOrder(q, arr) {
+  const right = arr.filter((v, i) => v === i).length;
+  return { correct: right === q.items.length && arr.length === q.items.length, right };
+}
+// Matching: pairs[i] is the index of the meaning given to term i (or -1). Returns { correct, right }.
+export function gradeMatch(q, pairs) {
+  const right = q.pairs.filter((_, i) => pairs[i] === i).length;
+  return { correct: right === q.pairs.length, right };
+}
+// The answer as one line of text, for feedback and the "Review what you missed" list.
+export function answerText(q) {
+  const type = typeOf(q);
+  if (type === "typed") return q.a[0];
+  if (type === "explain") return q.a;
+  if (type === "order") return q.items.join(" → ");
+  if (type === "match") return q.pairs.map(([a, b]) => a + ": " + b).join("; ");
+  return q.c[0];
 }
 
 export const MIN = 60000;
@@ -214,7 +311,7 @@ export function dueList(st, keys, now = Date.now(), filter = null) {
 export function buildSession(st, keys, mode, now = Date.now(), filter = null) {
   const pool = QUESTIONS.filter((q) => keys.includes(q.s) && (!filter || filter(q)));
   const due = dueList(st, keys, now, filter);
-  if (mode === "due") return interleave(due.map((q) => q.id)).slice(0, SIZE);
+  if (mode === "due") return interleaveUnits(keepSetsTogether(st, due.slice(0, SIZE).map((q) => q.id), now));
   const chosen = due.slice(0, 5).map((q) => q.id);
   const fresh = pool.filter((q) => !st.cards[q.id]);
   const scored = fresh
@@ -222,8 +319,15 @@ export function buildSession(st, keys, mode, now = Date.now(), filter = null) {
     .filter((x) => x.w > 0)
     .sort((a, b) => b.w - a.w)
     .map((x) => x.q.id);
-  const ordered = mode === "mixed" ? interleave(scored) : scored;
-  let newIds = ordered.slice(0, SIZE - chosen.length);
+  // About 3 in 10 new questions come from the practice formats (recall, explain, order, match), when there are any left.
+  const need = SIZE - chosen.length;
+  // Mixed review spreads both kinds across subjects (interleave takes the best of each subject in turn).
+  const spread = (list) => (mode === "mixed" ? interleave(list) : list);
+  const prac = spread(scored.filter((id) => QMAP[id].type));
+  const np = Math.min(prac.length, Math.ceil(need * PRACTICE_SHARE));
+  const keep = new Set(prac.slice(0, np).concat(spread(scored.filter((id) => !QMAP[id].type)).slice(0, need - np)));
+  const picked = scored.filter((id) => keep.has(id));
+  let newIds = spread(picked).slice(0, need);
   if (mode === "subject") newIds = newIds.sort((a, b) => QMAP[a].d - QMAP[b].d);
   let ids = chosen.concat(newIds);
   if (ids.length < SIZE) {
@@ -237,10 +341,75 @@ export function buildSession(st, keys, mode, now = Date.now(), filter = null) {
     const rest = fresh.filter((q) => !ids.includes(q.id)).sort((a, b) => a.d - b.d).map((q) => q.id);
     ids = ids.concat(rest.slice(0, SIZE - ids.length));
   }
-  return mode === "mixed" ? interleave(ids) : ids;
+  ids = keepSetsTogether(st, ids, now);
+  // A second reading set held back for later can leave the round short: top it up with loose new questions.
+  if (ids.length < SIZE) ids = ids.concat(spread(scored.filter((id) => !ids.includes(id) && !QMAP[id].p)).slice(0, SIZE - ids.length));
+  return mode === "mixed" ? interleaveUnits(ids) : ids;
+}
+// Interleave by subject, treating a reading set as one unit so it stays together: at each step take the
+// next unit of the subject with the most left that differs from the one just placed.
+function interleaveUnits(ids) {
+  const units = [], byKey = {};
+  for (const id of ids) {
+    const p = QMAP[id].p;
+    if (p && byKey[p]) { byKey[p].push(id); continue; }
+    const u = [id];
+    if (p) byKey[p] = u;
+    units.push(u);
+  }
+  const groups = {}, order = [];
+  for (const u of units) {
+    const s = QMAP[u[0]].s;
+    if (!groups[s]) { groups[s] = []; order.push(s); }
+    groups[s].push(u);
+  }
+  const out = [];
+  let last = null;
+  while (out.length < ids.length) {
+    const left = order.filter((s) => groups[s].length);
+    const pick = left.filter((s) => s !== last).sort((a, b) => groups[b].length - groups[a].length || order.indexOf(a) - order.indexOf(b))[0] || left[0];
+    out.push(...groups[pick].shift());
+    last = pick;
+  }
+  return out;
+}
+const PRACTICE_SHARE = 0.3;
+// A school-subject reading question brings the rest of its passage set along (the unseen or due ones),
+// placed together where the first one landed. One set per round; other reading questions wait for a later
+// round, and the round is trimmed back to SIZE from the end. LSAT sets are handled by buildLsatSession.
+export function keepSetsTogether(st, ids, now = Date.now()) {
+  if (!ids.some((id) => QMAP[id].p && QMAP[id].s !== "lsat")) return ids;
+  const out = [], seen = new Set();
+  let setKey = null;
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    const q = QMAP[id];
+    if (!q.p || q.s === "lsat") { out.push(id); seen.add(id); continue; }
+    if (setKey && q.p !== setKey) continue;
+    setKey = q.p;
+    for (const x of passageIds(q.p)) {
+      const c = st.cards[x];
+      // Unseen siblings come along only if the subject's level serves their difficulty.
+      const fresh = !c && WEIGHTS[levelOf(st, q.s)][QMAP[x].d - 1] > 0;
+      if (seen.has(x) || !(x === id || ids.includes(x) || fresh || (c && c.due <= now))) continue;
+      out.push(x); seen.add(x);
+    }
+  }
+  // Trim back to SIZE from whichever subject has the most loose questions, so Mixed review stays balanced.
+  while (out.length > SIZE) {
+    const loose = out.filter((id) => !QMAP[id].p);
+    if (!loose.length) break;
+    const count = {};
+    for (const id of out) count[QMAP[id].s] = (count[QMAP[id].s] || 0) + 1;
+    const top = Object.keys(count).filter((s) => loose.some((id) => QMAP[id].s === s)).sort((a, b) => count[b] - count[a])[0];
+    const drop = loose.filter((id) => QMAP[id].s === top).pop();
+    out.splice(out.lastIndexOf(drop), 1);
+  }
+  return out;
 }
 
 // ---------- LSAT rounds ----------
+// LSAT questions without a passage: the Logical Reasoning items plus the recall / explain / order / match drills.
 export const isLR = (q) => q.s === "lsat" && !q.p;
 export function passageIds(key) {
   return QUESTIONS.filter((q) => q.p === key).map((q) => q.id);

@@ -2,11 +2,16 @@
 import assert from "node:assert/strict";
 import { RAW } from "../js/questions.js";
 import { LSAT_ITEMS, LSAT_PASSAGES } from "../js/lsat.js";
+import { EXTRA, EXTRA_PASSAGES } from "../js/practice.js";
 import * as E from "../js/engine.js";
 
 let failures = 0;
 const t = (name, fn) => { try { fn(); console.log("ok   " + name); } catch (e) { failures++; console.log("FAIL " + name + "\n     " + e.message); } };
 
+// 306 original multiple-choice questions plus the practice formats in js/practice.js.
+const EXTRA_N = Object.values(EXTRA).reduce((a, l) => a + l.length, 0);
+const CORE_N = 306 + EXTRA_N;
+const isMC = (q) => !q.type;
 // ---- before the LSAT bank is loaded (the site now loads js/lsat.js on demand) ----
 // A store in the exact format the live site saves to localStorage ("study-lab-progress-v1").
 const LIVE_STORE = {
@@ -22,15 +27,15 @@ const LIVE_STORE = {
 };
 t("lazy LSAT: bank not loaded at import, core works", () => {
   assert.equal(E.lsatLoaded(), false);
-  assert.equal(E.QUESTIONS.length, 306);
-  assert.equal(E.TOTAL_QUESTIONS, 356);
+  assert.equal(E.QUESTIONS.length, CORE_N);
+  assert.equal(E.TOTAL_QUESTIONS, CORE_N + LSAT_ITEMS.length);
 });
 t("saved progress (live-site format) loads unchanged before the LSAT bank loads", () => {
   const n = E.normalize(JSON.parse(JSON.stringify(LIVE_STORE)));
   assert.deepEqual(n, LIVE_STORE);
   assert.deepEqual(E.decodeBackup(E.encodeBackup(LIVE_STORE)), LIVE_STORE);
   const lsat = E.subjectStats(n, "lsat", 1000);
-  assert.equal(lsat.total, 50); assert.equal(lsat.seen, 3); assert.equal(lsat.mastered, 1); assert.equal(lsat.due, 2);
+  assert.equal(lsat.total, E.LSAT_META.total); assert.equal(lsat.seen, 3); assert.equal(lsat.mastered, 1); assert.equal(lsat.due, 2);
   assert.deepEqual(E.dueCounts(n, 1000), { core: 1, lsat: 2 });
   const other = E.applyAnswer(E.emptyStore(), E.QMAP.geo0, true, "sure", 1700000005000);
   const m = E.mergeStores(n, other);
@@ -39,7 +44,7 @@ t("saved progress (live-site format) loads unchanged before the LSAT bank loads"
   const after = E.applyAnswer(n, E.QMAP.math1, false, "sure", 1700000006000);
   assert.deepEqual(Object.keys(after).sort(), Object.keys(LIVE_STORE).sort(), "same top-level shape");
   assert.deepEqual(after.cards.lsat27, LIVE_STORE.cards.lsat27, "answering a core question leaves LSAT cards alone");
-  assert.ok(!E.normalize({ ...LIVE_STORE, cards: { lsat50: { b: 1, due: 1, n: 1, k: 1, t: 1 } } }).cards.lsat50, "unknown ids still dropped");
+  assert.ok(!E.normalize({ ...LIVE_STORE, cards: { lsat65: { b: 1, due: 1, n: 1, k: 1, t: 1 }, "math-x999": { b: 1, due: 1, n: 1, k: 1, t: 1 } } }).cards.lsat65, "unknown ids still dropped");
 });
 t("weakest topic and due counts", () => {
   let st = E.emptyStore();
@@ -59,9 +64,10 @@ await E.loadLsat(); // a second call must not register the bank twice
 
 t("LSAT bank loads on demand, once, and matches LSAT_META", () => {
   assert.equal(E.lsatLoaded(), true);
-  assert.equal(E.QUESTIONS.length, 356, "no double registration");
+  assert.equal(E.QUESTIONS.length, CORE_N + LSAT_ITEMS.length, "no double registration");
   assert.equal(LSAT_ITEMS.length, E.LSAT_META.total);
-  assert.equal(LSAT_ITEMS.filter((r) => !r.p).length, E.LSAT_META.lr);
+  assert.equal(LSAT_ITEMS.filter((r) => !r.p && !r.type).length, E.LSAT_META.lr);
+  assert.equal(LSAT_ITEMS.filter((r) => r.type).length, E.LSAT_META.x);
   assert.equal(LSAT_ITEMS.filter((r) => r.p).length, E.LSAT_META.rc);
   assert.equal(Object.keys(LSAT_PASSAGES).length, E.LSAT_META.sets);
   assert.equal(E.TOTAL_QUESTIONS, E.QUESTIONS.length);
@@ -71,16 +77,17 @@ t("saved progress is identical whether or not the LSAT bank was loaded", () => {
   assert.equal(E.subjectStats(LIVE_STORE, "lsat", 1000).seen, 3);
   assert.deepEqual(E.dueCounts(LIVE_STORE, 1000), { core: 1, lsat: 2 });
 });
-t("306 core questions, 51 per core subject, plus the LSAT bank", () => {
+t("306 original questions (51 per core subject) plus practice formats, plus the LSAT bank", () => {
   assert.equal(E.CORE_KEYS.length, 6);
   for (const k of E.CORE_KEYS) assert.equal(RAW[k].length, 51, k);
-  assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat").length, 306);
+  assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat" && !q.id.includes("-x")).length, 306);
+  assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat").length, CORE_N);
   assert.equal(E.QUESTIONS.filter((q) => q.s === "lsat").length, LSAT_ITEMS.length);
-  assert.ok(LSAT_ITEMS.length >= 45 && LSAT_ITEMS.length <= 55, "about 45-50 LSAT questions, got " + LSAT_ITEMS.length);
+  assert.ok(LSAT_ITEMS.length >= 60 && LSAT_ITEMS.length <= 70, "LSAT bank size " + LSAT_ITEMS.length);
 });
-t("every question is well formed (4 choices core, 5 choices LSAT)", () => {
+t("every multiple-choice question is well formed (4 choices core, 5 choices LSAT)", () => {
   const seenQ = new Set();
-  for (const q of E.QUESTIONS) {
+  for (const q of E.QUESTIONS.filter(isMC)) {
     const n = q.s === "lsat" ? 5 : 4;
     assert.ok([1, 2, 3].includes(q.d), q.id + " difficulty");
     assert.ok(q.t && q.q && q.e, q.id + " text");
@@ -93,7 +100,7 @@ t("every question is well formed (4 choices core, 5 choices LSAT)", () => {
   }
 });
 t("LSAT items: fixed A-E order, trap note, stimulus or passage", () => {
-  for (const q of E.QUESTIONS.filter((x) => x.s === "lsat")) {
+  for (const q of E.QUESTIONS.filter((x) => x.s === "lsat" && isMC(x))) {
     assert.equal(q.fixed.length, 5, q.id);
     assert.deepEqual([...q.fixed].sort(), [...q.c].sort(), q.id + " fixed order is a permutation");
     assert.ok(q.trap && q.trap !== q.c[0] && q.c.includes(q.trap), q.id + " trap is a wrong choice");
@@ -108,7 +115,7 @@ t("LSAT items: fixed A-E order, trap note, stimulus or passage", () => {
 });
 const sentences = (s) => (s.replace(/\n/g, " ").replace(/\b(Dr|Mr|Ms|Mrs)\./g, "$1").match(/[.!?](?=[”"’]?\s|[”"’]?$)/g) || []).length;
 t("LSAT lengths: short LR 2-4 sentences, medium LR 5-8 sentences", () => {
-  const lr = E.QUESTIONS.filter(E.isLR);
+  const lr = E.QUESTIONS.filter((q) => E.isLR(q) && isMC(q));
   for (const q of lr) {
     const n = sentences(q.stim);
     if (q.len === "short") assert.ok(n >= 2 && n <= 4, q.id + " short has " + n + " sentences");
@@ -133,7 +140,7 @@ t("LSAT passage sets: at least 3, distinct topic areas, 400-520 words, 5-6 quest
   assert.deepEqual([...E.PASSAGE_KEYS].sort(), [...keys].sort());
 });
 t("LSAT answer balance: correct is longest in at most 20%, letters spread evenly", () => {
-  const qs = E.QUESTIONS.filter((q) => q.s === "lsat");
+  const qs = E.QUESTIONS.filter((q) => q.s === "lsat" && isMC(q));
   const longest = qs.filter((q) => q.c[0].length >= Math.max(...q.c.slice(1).map((c) => c.length))).length;
   assert.ok(longest / qs.length <= 0.2, "correct longest in " + longest + "/" + qs.length);
   const counts = {};
@@ -218,16 +225,26 @@ t("each subject has all three difficulties", () => {
   for (const k of E.SUBJECT_KEYS) for (const d of [1, 2, 3]) assert.ok(E.QUESTIONS.some((q) => q.s === k && q.d === d), k + d);
 });
 t("new subject session: 10 questions, level 1 serves no hard ones, easiest first", () => {
-  const ids = E.buildSession(E.emptyStore(), ["math"], "subject");
-  assert.equal(ids.length, 10);
-  const ds = ids.map((id) => E.QMAP[id].d);
-  assert.ok(!ds.includes(3));
-  assert.deepEqual(ds, [...ds].sort());
+  for (let r = 0; r < 30; r++) {
+    const ids = E.buildSession(E.emptyStore(), ["math"], "subject");
+    assert.equal(ids.length, 10);
+    const ds = ids.map((id) => E.QMAP[id].d);
+    assert.ok(!ds.includes(3));
+    // A reading set stays together in authored order, so the easiest-first check skips its questions.
+    const loose = ids.filter((id) => !E.QMAP[id].p).map((id) => E.QMAP[id].d);
+    assert.deepEqual(loose, [...loose].sort());
+  }
 });
 t("mixed review interleaves subjects", () => {
-  const ids = E.buildSession(E.emptyStore(), E.CORE_KEYS, "mixed");
-  assert.equal(ids.length, 10);
-  for (let i = 1; i < ids.length; i++) assert.notEqual(E.QMAP[ids[i]].s, E.QMAP[ids[i - 1]].s);
+  for (let r = 0; r < 30; r++) {
+    const ids = E.buildSession(E.emptyStore(), E.CORE_KEYS, "mixed");
+    assert.equal(ids.length, 10);
+    // Neighbours differ in subject, except inside a reading set (which stays together).
+    for (let i = 1; i < ids.length; i++) {
+      const a = E.QMAP[ids[i - 1]], b = E.QMAP[ids[i]];
+      if (!(a.p && a.p === b.p)) assert.notEqual(b.s, a.s, ids.join(","));
+    }
+  }
 });
 t("spaced repetition boxes and intervals", () => {
   const now = 1_700_000_000_000, q = E.QMAP.math0;
@@ -274,6 +291,175 @@ t("backup codes round-trip, and canvas-era codes load", () => {
   const canvasEra = { cards: { econ2: { b: 2, due: 9e12, n: 1, k: 1 } }, recent: { econ: [1] }, days: ["2026-11-16"], total: 1, right: 1 };
   const loaded = E.decodeBackup(Buffer.from(JSON.stringify(canvasEra)).toString("base64"));
   assert.equal(loaded.cards.econ2.b, 2); assert.ok(loaded.cards.econ2.t > 0); assert.equal(loaded.total, 1);
+});
+
+
+// ---------- practice formats: recall, explain why, put in order, match, reading sets ----------
+const ALL_PRACTICE = () => E.QUESTIONS.filter((q) => q.type || (q.p && q.s !== "lsat"));
+t("practice formats: 10-15 new questions in every category, every format in every school subject", () => {
+  for (const k of E.CORE_KEYS) {
+    const qs = E.QUESTIONS.filter((q) => q.s === k && q.id.includes("-x"));
+    assert.ok(qs.length >= 10 && qs.length <= 15, k + " has " + qs.length);
+    for (const type of ["typed", "explain", "order", "match"]) assert.ok(qs.some((q) => q.type === type), k + " has " + type);
+    assert.ok(qs.filter((q) => q.p).length >= 2, k + " has a reading set");
+  }
+  const lsatNew = E.QUESTIONS.filter((q) => q.s === "lsat" && Number(q.id.slice(4)) >= 50);
+  assert.ok(lsatNew.length >= 10 && lsatNew.length <= 15, "LSAT new " + lsatNew.length);
+  for (const type of ["typed", "explain", "order", "match"]) assert.ok(lsatNew.some((q) => q.type === type), "LSAT has " + type);
+});
+t("practice ids: '<subject>-x<n>' appended after the original bank, unique, original ids unchanged", () => {
+  for (const k of E.CORE_KEYS) {
+    EXTRA[k].forEach((_, i) => assert.ok(E.QMAP[k + "-x" + i], k + "-x" + i));
+    RAW[k].forEach((r, i) => assert.equal(E.QMAP[k + i].q, r[2], "original id " + k + i));
+  }
+  assert.equal(new Set(E.QUESTIONS.map((q) => q.id)).size, E.QUESTIONS.length);
+  assert.ok(E.QUESTIONS.every((q) => q.s === "lsat" || !q.id.startsWith("lsat")), "core ids never look like LSAT ids");
+});
+t("practice items are well formed", () => {
+  const seen = new Set();
+  for (const q of E.QUESTIONS.filter((x) => x.type)) {
+    assert.ok([1, 2, 3].includes(q.d) && q.t && q.q && q.e && q.e.length > 30, q.id + " basics");
+    assert.ok(!seen.has(q.q), "duplicate prompt " + q.q); seen.add(q.q);
+    if (q.type === "typed") {
+      assert.ok(Array.isArray(q.a) && q.a.length && q.a.every((x) => typeof x === "string" && x.trim()), q.id + " accepted answers");
+      if (q.num !== undefined) { assert.equal(typeof q.num, "number"); assert.equal(E.gradeTyped(q, q.a[0]).correct, true, q.id + " shown answer grades right"); }
+      for (const a of q.a) assert.ok(E.gradeTyped(q, a).correct, q.id + " accepts " + a);
+    } else if (q.type === "explain") {
+      assert.ok(typeof q.a === "string" && q.a.length > 80, q.id + " model answer");
+      assert.ok(Array.isArray(q.k) && q.k.length >= 2 && q.k.length <= 4, q.id + " key points");
+    } else if (q.type === "order") {
+      assert.ok(q.items.length >= 3 && q.items.length <= 6 && new Set(q.items).size === q.items.length, q.id + " items");
+      assert.ok(!q.items.some((x) => /\(\d{3,4}\)/.test(x)), q.id + " doesn't give the answer away with dates");
+    } else if (q.type === "match") {
+      assert.ok(q.pairs.length >= 3 && q.pairs.length <= 5, q.id + " pairs");
+      assert.equal(new Set(q.pairs.map((p) => p[0])).size, q.pairs.length, q.id + " unique terms");
+      assert.equal(new Set(q.pairs.map((p) => p[1])).size, q.pairs.length, q.id + " unique meanings");
+    } else assert.fail(q.id + " unknown type " + q.type);
+  }
+  for (const [k, p] of Object.entries(EXTRA_PASSAGES)) {
+    const n = E.passageIds(k).length;
+    assert.ok(n >= 2 && n <= 4, k + " has " + n + " questions");
+    assert.ok(p.title && p.area && p.paras.length >= 2, k + " shape");
+    assert.equal(E.PASSAGES[k], p);
+  }
+});
+t("typed grading: case, spaces, punctuation, articles, accents, typos on long words only", () => {
+  const q = { type: "typed", a: ["Magna Carta", "Magna Charta"] };
+  for (const ok of ["magna carta", "  MAGNA   carta ", "The Magna Carta.", "magna charta", "Magna Cartaa", "magna crta"]) assert.ok(E.gradeTyped(q, ok).correct, ok);
+  assert.ok(E.gradeTyped(q, "Magna Cartaa").close && !E.gradeTyped(q, "magna carta").close);
+  assert.ok(!E.gradeTyped(q, "Bill of Rights").correct);
+  const its = { a: ["its"] };
+  assert.ok(E.gradeTyped(its, "Its").correct && !E.gradeTyped(its, "it's").correct && !E.gradeTyped(its, "it\u2019s").correct, "its / it's stays strict");
+  assert.ok(E.gradeTyped({ a: ["Montréal"] }, "montreal").correct, "accents ignored");
+  assert.ok(E.gradeTyped({ a: ["H2O"] }, "H\u2082O").correct, "subscript digits");
+  const blank = E.gradeTyped(q, "   ");
+  assert.ok(blank.blank && !blank.correct);
+});
+t("typed grading: numbers with tolerance, fractions, commas, $, %, unicode minus", () => {
+  const p = E.QMAP["math-x3"]; // 1/6, tolerance 0.001
+  for (const ok of ["1/6", "0.167", ".1667", "1 / 6", "about 1/6"]) assert.ok(E.gradeTyped(p, ok).correct, ok);
+  for (const bad of ["0.17", "1/5", "6/36ths?", ""]) if (bad !== "6/36ths?") assert.ok(!E.gradeTyped(p, bad).correct, bad);
+  assert.ok(E.gradeTyped(p, "6/36").correct, "equivalent fraction");
+  const money = E.QMAP["econ-x1"];
+  for (const ok of ["1102.50", "$1,102.50", "1102.5 dollars", "$1102.5"]) assert.ok(E.gradeTyped(money, ok).correct, ok);
+  assert.ok(!E.gradeTyped(money, "1100").correct);
+  const neg = E.QMAP["econ-x4"];
+  for (const ok of ["-2", "\u22122%", "-2 %", "about -2"]) assert.ok(E.gradeTyped(neg, ok).correct, ok);
+  assert.ok(!E.gradeTyped(neg, "2").correct, "sign matters");
+  assert.ok(E.gradeTyped(E.QMAP["math-x1"], "x = 6").correct && E.gradeTyped(E.QMAP["hist-x0"], "1867").correct && !E.gradeTyped(E.QMAP["hist-x0"], "1876").correct);
+  assert.equal(E.parseNumber("no number"), null);
+  assert.equal(E.parseNumber("3/0"), null);
+});
+t("ordering and matching: grading and start positions", () => {
+  const o = E.QMAP["sci-x7"];
+  assert.deepEqual(E.gradeOrder(o, [0, 1, 2, 3, 4]), { correct: true, right: 5 });
+  assert.deepEqual(E.gradeOrder(o, [1, 0, 2, 3, 4]), { correct: false, right: 3 });
+  for (let i = 0; i < 50; i++) {
+    const start = E.choiceOrder(o);
+    assert.deepEqual([...start].sort(), [0, 1, 2, 3, 4]);
+    assert.ok(!E.gradeOrder(o, start).correct, "never starts solved");
+  }
+  const m = E.QMAP["sci-x9"];
+  assert.deepEqual(E.gradeMatch(m, [0, 1, 2, 3]), { correct: true, right: 4 });
+  assert.deepEqual(E.gradeMatch(m, [1, 0, 2, -1]), { correct: false, right: 1 });
+  assert.deepEqual([...E.choiceOrder(m)].sort(), [0, 1, 2, 3]);
+  assert.deepEqual(E.choiceOrder(E.QMAP["sci-x0"]), [], "typed has no choices");
+});
+t("answerText for every format", () => {
+  assert.equal(E.answerText(E.QMAP["sci-x0"]), "mitochondria");
+  assert.match(E.answerText(E.QMAP["sci-x7"]), /^Cell → Tissue → Organ → Organ system → Organism$/);
+  assert.match(E.answerText(E.QMAP["sci-x9"]), /^Proton: Positive particle in the nucleus; /);
+  assert.equal(E.answerText(E.QMAP["sci-x5"]), E.QMAP["sci-x5"].a);
+  assert.equal(E.answerText(E.QMAP.math0), "56");
+});
+t("practice formats use the same cards: spaced repetition, levels, merge, backup, live-format progress", () => {
+  const now = 1_700_000_000_000;
+  let st = E.normalize(JSON.parse(JSON.stringify(LIVE_STORE)));
+  st = E.applyAnswer(st, E.QMAP["hist-x0"], true, "sure", now);
+  st = E.applyAnswer(st, E.QMAP["geo-x9"], false, "unsure", now);
+  st = E.applyAnswer(st, E.QMAP.lsat57, true, "guess", now);
+  assert.deepEqual(Object.keys(st).sort(), Object.keys(LIVE_STORE).sort(), "same top-level shape");
+  assert.deepEqual(st.cards["hist-x0"], { b: 3, due: now + 3 * E.DAY, n: 1, k: 1, t: now });
+  assert.equal(st.cards["geo-x9"].b, 1);
+  for (const id of Object.keys(LIVE_STORE.cards)) assert.deepEqual(st.cards[id], LIVE_STORE.cards[id], id + " untouched");
+  const json = JSON.parse(JSON.stringify(st));
+  assert.deepEqual(E.normalize(json), st, "round-trips through localStorage JSON");
+  assert.deepEqual(E.decodeBackup(E.encodeBackup(st)).cards, st.cards, "backup code");
+  const other = E.applyAnswer(E.emptyStore(), E.QMAP["hist-x0"], false, "sure", now + 5);
+  const m = E.mergeStores(st, other);
+  assert.equal(m.cards["hist-x0"].t, now + 5, "merge keeps the newest");
+  assert.ok(m.cards["geo-x9"] && m.cards.lsat27);
+  assert.equal(E.subjectStats(st, "hist", now).total, 51 + EXTRA.hist.length);
+  assert.deepEqual(E.dueCounts(st, now + 11 * E.MIN), { core: 2, lsat: 3 }, "LSAT drill counted as LSAT once due");
+  const w = E.weakestTopic([E.QMAP["eng-x2"], E.QMAP["eng-x5"], E.QMAP["eng-x2"]].reduce((s, q) => E.applyAnswer(s, q, false, "sure", now), E.emptyStore()));
+  assert.ok(w && w.s === "eng", "practice answers feed the weakest topic");
+});
+t("rounds mix in about 3 practice questions per 10 and keep a reading set together (one per round)", () => {
+  let prac = 0, rounds = 0;
+  for (let r = 0; r < 200; r++) {
+    for (const [keys, mode] of [[E.CORE_KEYS, "mixed"], [["geo"], "subject"]]) {
+      const ids = E.buildSession(E.emptyStore(), keys, mode);
+      rounds++;
+      assert.equal(ids.length, 10);
+      prac += ids.filter((id) => E.QMAP[id].type).length;
+      assert.ok(ids.filter((id) => E.QMAP[id].type).length <= 4, "not crowded out");
+      const sets = [...new Set(ids.map((id) => E.QMAP[id].p).filter(Boolean))];
+      assert.ok(sets.length <= 1, "one reading set per round");
+      for (const k of sets) {
+        const pos = ids.map((id, i) => (E.QMAP[id].p === k ? i : -1)).filter((i) => i >= 0);
+        assert.equal(pos[pos.length - 1] - pos[0], pos.length - 1, "set questions are adjacent");
+        assert.deepEqual(ids.filter((id) => E.QMAP[id].p === k), E.passageIds(k).filter((id) => ids.includes(id)), "authored order");
+      }
+    }
+  }
+  const avg = prac / rounds;
+  assert.ok(avg >= 2 && avg <= 3.5, "average practice per round " + avg.toFixed(2));
+  // types are interleaved: a mixed round usually shows more than one format
+  let multi = 0;
+  for (let r = 0; r < 100; r++) multi += new Set(E.buildSession(E.emptyStore(), E.CORE_KEYS, "mixed").map((id) => E.typeOf(E.QMAP[id]))).size >= 3 ? 1 : 0;
+  assert.ok(multi >= 40, "mixed rounds with 3+ formats: " + multi + "/100");
+});
+t("due reading questions bring their unseen siblings; seen and not-due ones stay out", () => {
+  const now = Date.now();
+  const set = E.passageIds("geo-permafrost");
+  let st = E.applyAnswer(E.emptyStore(), E.QMAP[set[1]], false, "sure", now - 20 * E.MIN);
+  st = E.applyAnswer(st, E.QMAP[set[0]], true, "sure", now);
+  const ids = E.buildSession(st, ["geo"], "due", now);
+  assert.deepEqual(ids, [set[1]], "due round: only the due card (siblings seen or above level stay out)");
+  st = E.applyAnswer(E.emptyStore(), E.QMAP[set[1]], false, "sure", now - 20 * E.MIN);
+  const ids2 = E.buildSession(st, ["geo"], "subject", now);
+  assert.ok(ids2.includes(set[0]) && ids2.includes(set[1]), "subject round brings the unseen easier sibling");
+  assert.ok(!ids2.includes(set[2]), "the hard sibling waits until level 2+");
+});
+t("LSAT short rounds include drills alongside Logical Reasoning, never passage questions", () => {
+  let drills = 0;
+  for (let r = 0; r < 50; r++) {
+    const ids = E.buildLsatSession(E.emptyStore(), "short");
+    assert.equal(ids.length, 10);
+    assert.ok(ids.every((id) => !E.QMAP[id].p));
+    drills += ids.filter((id) => E.QMAP[id].type).length;
+  }
+  assert.ok(drills / 50 >= 1.5, "drills per short round " + drills / 50);
 });
 
 console.log(failures ? failures + " failed" : "all engine checks passed");

@@ -12,6 +12,7 @@
 //   a     display letter of the correct answer; the wrong answers fill the other slots in authored order
 //   trap  index into c of the most tempting wrong answer; te explains why it is wrong
 //   e     why the correct answer is right
+//   type  (drills only, lsat55+) "typed" | "explain" | "order" | "match", with the fields described in js/practice.js
 
 export const LSAT_PASSAGES = {
   "contracts": {
@@ -57,6 +58,16 @@ export const LSAT_PASSAGES = {
       "Parry died in 1935, but Lord carried the work forward, and by the time his book The Singer of Tales appeared in 1960, the view that the Homeric poems emerged from an oral tradition had become widely accepted. Lord also argued that learning to read and write tended to erode a singer’s ability to compose in this way. Its success, however, created a new difficulty. If nearly every phrase was traditional, what remained of the poet? Some of Parry’s followers concluded that it made little sense to praise a particular word choice, since the poet had simply used whatever formula the meter required.",
       "Later critics have resisted that conclusion. A formula, they point out, is a resource rather than a cage: the tradition offered alternatives, and the poet chose when to use a stock phrase, when to depart from it, and how to arrange scenes for effect. When a hero’s familiar epithet of praise appears at the moment of his humiliation, the contrast between the ready-made phrase and the situation can sharpen the irony rather than dull it. Repetition, too, can be purposeful: a scene repeated with one small change draws attention to the change. On this view, the discovery of the oral tradition does not diminish the poet’s art. It changes the standard by which that art should be judged, from originality of phrase to mastery of a shared language."
     ]
+  },
+  "restorative": {
+    "title": "Restorative justice and its critics",
+    "paras": [
+      "Conventional criminal justice asks three questions: what law was broken, who broke it, and what punishment the offender deserves. Restorative justice, an approach that has spread through youth justice systems in New Zealand, Canada and elsewhere in recent decades, asks different ones: who was harmed, what do they need, and whose obligation is it to meet those needs? In a typical restorative conference, the offender, the person harmed, their supporters and a trained facilitator meet to discuss what happened and agree on how the offender will make amends, often through an apology, repayment or community work. Offenders usually take part only after accepting responsibility for the harm they caused.",
+      "Supporters point to studies finding that victims who take part report less fear and greater satisfaction than those whose cases go through court, and that some offenders reoffend less often afterward. Critics respond that participants choose to take part, so the people who enter restorative programs may differ from those who do not; offenders willing to face their victims might be less likely to reoffend in any case. Critics also worry that the pressure to reconcile can fall unfairly on victims. A victim who declines to meet the offender may feel that she has let the process down, and an offender who apologizes because it is expected may say little that is sincere.",
+      "These objections are serious, but they argue for careful design rather than abandonment. Studies that assign eligible cases to a conference or to court by lot can separate the effect of the program from the effect of who volunteers, and several such trials have found modest but real benefits. In some of them, the largest benefits appeared for violent offences, the very cases in which many observers had expected the approach to work least well. Programs can also make participation genuinely optional for victims, with a conference going ahead only if the victim wishes.",
+      "Nor should restorative justice be judged by reoffending alone. A court that imposes a sentence has done its job even if the person harmed leaves no less afraid and no better informed about why the offence happened. A conference that produces an honest account and a concrete plan for repair may be worthwhile on those grounds alone. The right comparison, then, is not between restorative justice and a perfect system, but between it and the system it would partly replace, judged by everything that system is supposed to accomplish."
+    ],
+    "area": "Criminology"
   }
 };
 
@@ -640,4 +651,94 @@ export const LSAT_ITEMS = [
     trap: 1,
     e: "Paragraph 1 notes the repetitions. Paragraph 2 gives Parry’s explanation, accepted by paragraph 3. Paragraph 3 then reports the followers’ inference that word choice deserves no praise, and paragraph 4 challenges it. The oral theory itself is never rejected.",
     te: "The author doesn’t reject both explanations. The oral-tradition account is endorsed; what gets challenged is one conclusion drawn from it. The “editors” idea is mentioned only as an older view, not weighed as a rival." },
+  // ---- added Nov 2026: one more passage set (lsat50-52, lsat53-54), then recall, explain, ordering and matching drills (lsat55-64).
+  // Drill items use the same fields as js/practice.js (type, a, k, items, pairs) and have no p, so they join short rounds.
+  { d: 2, t: "RC · Main point", len: "long", p: "restorative", a: "B",
+    q: "Which one of the following most accurately expresses the main point of the passage?",
+    c: [
+      "Although restorative justice faces legitimate criticisms, those criticisms can be addressed through careful program design.",
+      "Restorative justice asks different questions about crime than conventional criminal justice does.",
+      "Restorative justice should replace conventional criminal courts for young offenders.",
+      "Studies of restorative justice are unreliable because the participants choose to take part.",
+      "Victims are more satisfied with restorative conferences than with court proceedings."],
+    trap: 1,
+    e: "The passage describes the approach, presents the evidence and the critics’ objections, then concludes that the objections “argue for careful design rather than abandonment.” That final judgment is what the rest of the passage builds toward.",
+    te: "This is true, but it’s only the framing in paragraph 1. Main-point answers must cover where the author ends up, and here that’s the response to the critics." },
+  { d: 2, t: "RC · Viewpoint", len: "long", p: "restorative", a: "D",
+    q: "The critics mentioned in the second paragraph would be most likely to agree with which one of the following statements?",
+    c: [
+      "Lower reoffending among participants might reflect who chooses to participate rather than the effect of the program.",
+      "Restorative conferences increase the fear that victims feel.",
+      "Studies that assign cases by lot show that restorative justice works.",
+      "Offenders who meet their victims always reoffend less often.",
+      "Facilitators should be removed from restorative conferences."],
+    trap: 2,
+    e: "The critics argue that “participants choose to take part,” so willing offenders “might be less likely to reoffend in any case.” That is a selection-effect objection.",
+    te: "Assignment by lot is the author’s answer to the critics, in paragraph 3. Nothing suggests the critics accept it." },
+  { d: 3, t: "RC · Function", len: "long", p: "restorative", a: "A",
+    q: "The author mentions studies that assign cases “by lot” primarily in order to",
+    c: [
+      "show how one criticism of the evidence for restorative justice can be answered",
+      "argue that conventional courts should also assign cases at random",
+      "concede that the benefits of restorative justice are too small to matter",
+      "explain why victims may feel pressure to reconcile",
+      "describe how cases are usually assigned in youth courts"],
+    trap: 2,
+    e: "The critics say volunteers may differ from non-volunteers. Random assignment removes that difference, so it directly answers the selection objection, and the author reports that such trials still find benefits.",
+    te: "The author calls the benefits “modest but real,” which affirms rather than dismisses them. A word like “modest” is a common hook for wrong “concede” answers." },
+  { d: 1, t: "RC · Detail", len: "long", p: "restorative", a: "E",
+    q: "According to the passage, a typical restorative conference includes each of the following EXCEPT",
+    c: [
+      "a judge who decides the offender’s sentence",
+      "the person who was harmed",
+      "the offender",
+      "a trained facilitator",
+      "supporters of the people involved"],
+    trap: 4,
+    e: "Paragraph 1 lists the offender, the person harmed, their supporters and a trained facilitator, who together agree on how the offender will make amends. No judge imposes a sentence; that is the conventional model the passage contrasts it with.",
+    te: "Supporters are easy to overlook, but the first paragraph names them: “the offender, the person harmed, their supporters and a trained facilitator.”" },
+  { d: 3, t: "RC · Author’s view", len: "long", p: "restorative", a: "C",
+    q: "Which one of the following most accurately describes the view the author expresses in the final paragraph?",
+    c: [
+      "Restorative justice should be evaluated against the full range of goals the existing system is meant to serve.",
+      "Restorative justice should be measured against an ideal justice system rather than the current one.",
+      "Reducing reoffending is the only reasonable measure of a justice program’s success.",
+      "Conventional courts fail to achieve any of the goals they are supposed to accomplish.",
+      "A restorative conference is worthwhile only if it lowers the offender’s chance of reoffending."],
+    trap: 1,
+    e: "The author says restorative justice shouldn’t be judged “by reoffending alone” and that the right comparison is with the system it would partly replace, “judged by everything that system is supposed to accomplish.”",
+    te: "This reverses the author’s point. The final sentence explicitly rejects comparing restorative justice with “a perfect system.”" },
+  { type: "typed", d: 1, t: "LR · Conditional logic", q: "Complete the contrapositive of \"If it rains, the game is cancelled\": If the game is NOT cancelled, then ____.",
+    a: ["it did not rain", "it didn't rain", "it does not rain", "it doesn't rain", "it is not raining", "it isn't raining", "it is not rainy", "no rain", "not rain", "it didnt rain", "it doesnt rain"],
+    e: "The contrapositive reverses and negates both parts: if A then B becomes if not-B then not-A. It's the only conversion that's always valid. \"If the game is cancelled, it rained\" (the converse) is the classic trap." },
+  { type: "typed", d: 2, t: "LR · Conditional logic", q: "\"Unless\" means \"if not.\" So \"You will fail unless you study\" means: if you do NOT study, you ____.",
+    a: ["will fail", "fail", "you will fail", "you fail"],
+    e: "Translate \"A unless B\" as \"if not B, then A.\" Note what it doesn't say: studying doesn't guarantee passing." },
+  { type: "typed", d: 2, t: "LR · Assumptions", q: "What is the name for an unstated premise that an argument depends on? (One word.)",
+    a: ["assumption", "necessary assumption", "an assumption", "premise"],
+    e: "An assumption is the gap between the stated premises and the conclusion. Negation test: if denying a statement wrecks the argument, it's a necessary assumption." },
+  { type: "explain", d: 2, t: "LR · Flaw", q: "Explain what's wrong with this argument: \"Most successful CEOs wake up before 6 a.m., so if you start waking up before 6 a.m., you'll become a successful CEO.\"",
+    a: "It treats a trait that successful CEOs share as if it guaranteed success. Many early risers never become CEOs, so the argument reverses the relationship (CEO → early riser becomes early riser → CEO). It also assumes that waking early causes success when the link may be correlation, or the reverse.",
+    k: ["It reverses the conditional (confuses necessary and sufficient)", "Plenty of early risers aren't CEOs", "Correlation isn't causation"],
+    e: "Spotting \"most X are Y, so Y leads to X\" is one of the most tested flaws in Logical Reasoning." },
+  { type: "explain", d: 3, t: "LR · Assumptions", q: "Explain the difference between a necessary assumption and a sufficient assumption.",
+    a: "A necessary assumption must be true for the argument to work: if you negate it, the argument falls apart, but it alone may not prove the conclusion. A sufficient assumption, once added, guarantees the conclusion follows, but the argument might not strictly need that exact statement.",
+    k: ["Necessary: required (negating it breaks the argument)", "Sufficient: enough to guarantee the conclusion", "Use the negation test for necessary; for sufficient, ask whether it proves the conclusion"],
+    e: "Necessary-assumption answers are often modest; sufficient-assumption answers are often strong and sweeping." },
+  { type: "explain", d: 2, t: "LR · Causation", q: "A study finds that people who drink coffee live longer. Name one alternative explanation the study must rule out before concluding that coffee causes longer life.",
+    a: "A third factor could explain both: coffee drinkers might be wealthier, more active or healthier to begin with. Or the causation could run the other way: people who are already ill may give up coffee. Without controlling for these, the correlation doesn't show that coffee causes longer life.",
+    k: ["A third factor (a confounder) such as wealth or health", "Reverse causation, such as sick people quitting coffee", "Correlation alone doesn't show causation"],
+    e: "Weaken answers on causal arguments usually offer an alternative cause, reverse causation, or coincidence." },
+  { type: "order", d: 1, t: "LR · Strategy", q: "Put these steps for a Logical Reasoning question in an efficient order.",
+    items: ["Read the question stem", "Read the stimulus and find the conclusion", "Predict what the answer should do", "Check each choice against your prediction"],
+    e: "Reading the stem first tells you what to look for, and predicting before reading the choices protects you from attractive wrong answers." },
+  { type: "order", d: 3, t: "LR · Conditional logic", q: "Given: every chess club member is a student, every student has a library card, and anyone with a library card can borrow e-books. Ana is in the chess club. Order the chain of inferences.",
+    items: ["Ana is in the chess club", "So Ana is a student", "So Ana has a library card", "So Ana can borrow e-books"],
+    e: "Chaining conditionals: chess → student → card → e-books. Each link's result triggers the next rule. You can't run the chain backward: borrowing e-books doesn't prove club membership." },
+  { type: "match", d: 2, t: "LR · Flaw", q: "Match each reasoning flaw to its description.",
+    pairs: [["Ad hominem", "Attacking the person instead of the argument"], ["Circular reasoning", "Assuming the conclusion in a premise"], ["False dichotomy", "Treating two options as the only possibilities"], ["Hasty generalisation", "Drawing a broad conclusion from too small a sample"]],
+    e: "Knowing the flaw families by name lets you predict the right answer to a flaw question before reading the choices." },
+  { type: "match", d: 2, t: "LR · Question types", q: "Match each Logical Reasoning question type to its task.",
+    pairs: [["Strengthen", "Find the fact that best supports the argument"], ["Weaken", "Find the fact that most undermines the argument"], ["Flaw", "Describe the error in the reasoning"], ["Parallel reasoning", "Find the argument with the same logical structure"]],
+    e: "Spotting the task from the question stem is the first step of every Logical Reasoning question." },
 ];

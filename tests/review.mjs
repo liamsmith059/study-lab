@@ -43,6 +43,37 @@ async function ctxFor(vp, theme, seed = true, mobile = false) {
   p.on("dialog", (d) => d.accept().catch(() => {})); // "Leave this round?" when navigating away mid-round
   return p;
 }
+// Rounds mix formats now; MC-focused shots reorder the rest of the round so its multiple-choice questions come first.
+async function mcFirst(p) {
+  await p.locator("#q-stem").waitFor();
+  await p.evaluate(() => {
+    const { state, QMAP, render } = window.__studyLab;
+    const s = state.sess, rest = s.items.slice(s.idx), mc = (it) => !QMAP[it.qid].type;
+    s.items = s.items.slice(0, s.idx).concat(rest.filter(mc), rest.filter((it) => !mc(it)));
+    render(false, "stem");
+  });
+}
+// Answer whatever format is showing (wrong unless right=true) and wait for the feedback.
+async function answerAny(p, right = false, tap = false) {
+  const press = (loc) => (tap ? loc.tap() : loc.click());
+  const type = await p.evaluate(() => { const { state, QMAP } = window.__studyLab; return QMAP[state.sess.items[state.sess.idx].qid].type || "mc"; });
+  if (type === "mc") await press(p.locator(".choice").nth(await p.evaluate((r) => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; const c = it.order.indexOf(QMAP[it.qid].c[0]); return r ? c : (c + 1) % it.order.length; }, right)));
+  else if (type === "typed") { await p.locator("#typed-input").fill(right ? await p.evaluate(() => { const { state, QMAP } = window.__studyLab; return String(QMAP[state.sess.items[state.sess.idx].qid].a[0]); }) : "not sure"); await press(p.locator('[data-action="submit"]')); }
+  else if (type === "explain") { await p.locator("#explain-input").fill("Something like this, from memory."); await press(p.locator('[data-action="reveal"]')); await press(p.locator(`[data-action="grade"][data-arg="${right ? "got" : "partly"}"]`)); }
+  else if (type === "order") await press(p.locator('[data-action="checkorder"]'));
+  else if (type === "match") {
+    const n = await p.locator('[data-action="pick"][data-arg^="L:"]').count();
+    for (let i = 0; i < n; i++) { await press(p.locator(`[data-action="pick"][data-arg="L:${i}"]`)); await press(p.locator(`[data-action="pick"][data-arg="R:${right ? i : (i + 1) % n}"]`)); }
+    await press(p.locator('[data-action="checkmatch"]'));
+  }
+  await p.locator("#feedback").waitFor();
+}
+async function finishRound(p, tap = false) {
+  for (let i = 0; i < 25 && (await p.locator("#q-stem").count()); i++) {
+    await answerAny(p, i % 3 !== 0, tap);
+    await (tap ? p.locator('[data-action="next"]').tap() : p.locator('[data-action="next"]').click());
+  }
+}
 async function ready(p, sel = ".subject") { await p.locator(sel).first().waitFor(); await p.evaluate(() => document.fonts.ready); await p.waitForTimeout(150); }
 
 // ---- contrast ----
@@ -65,6 +96,10 @@ const PAIRS = [
   ["--text", "--card", "Sections menu: section entry"], ["--muted", "--card", "Sections menu: sub-heading entry and note"],
   ["--red-text", "--card", "Sections menu: current section"], ["--text", "--fill", "Sections menu: hovered / focused entry"],
   ["--red-text", "--bg", "Sections button while open (on the top bar)"],
+  ["--text", "--card-2", "Explain why: 'You wrote' box"], ["--muted-on-fill", "--card", "Explain why: 1/2/3 key hints on grade buttons"],
+  ["--text", "--ok-soft", "Order/Match: text on a correct row"], ["--text", "--tint-soft", "Order/Match: text on a wrong row or selected term"],
+  ["--muted", "--tint-soft", "Match: crossed-out wrong meaning"], ["--muted", "--ok-soft", "Order: position number on a correct row"],
+  ["--card", "--text", "Match: pair number badge (inverted)"],
 ];
 const report = {};
 for (const theme of ["light", "dark"]) {
@@ -92,13 +127,11 @@ for (const theme of ["light", "dark"]) {
   await p.goto(BASE); await ready(p);
   await shot(p, `home-${theme}-desktop.png`);
   await shot(p, `home-${theme}-desktop-full.png`, true);
-  await p.locator('[data-arg="subject:eng"]').click(); await ready(p, ".question");
+  await p.locator('[data-arg="subject:eng"]').click(); await ready(p, ".question"); await mcFirst(p);
   await p.locator(".choice").first().click(); await p.locator(".callout").waitFor();
   await shot(p, `quiz-${theme}-desktop-after-answer.png`);
-  for (let i = 0; i < 25 && (await p.locator(".choice").count()); i++) {
-    if (await p.locator(".choice:not(:disabled)").count()) { await p.locator(".choice").nth(i % 3).click(); await p.locator(".callout").waitFor(); }
-    await p.locator('[data-action="next"]').click();
-  }
+  await p.locator('[data-action="next"]').click();
+  await finishRound(p);
   await p.locator("text=Round complete").waitFor(); await p.waitForTimeout(150);
   await shot(p, `summary-${theme}-desktop.png`, true);
   await p.locator('[data-action="home"]').click(); await ready(p);
@@ -122,15 +155,13 @@ for (const theme of ["light", "dark"]) {
   await p.goto(BASE); await ready(p);
   await shot(p, `home-phone-${theme}.png`);
   await shot(p, `home-phone-${theme}-full.png`, true);
-  await p.locator('[data-arg="subject:hist"]').tap(); await ready(p, ".question");
+  await p.locator('[data-arg="subject:hist"]').tap(); await ready(p, ".question"); await mcFirst(p);
   await p.locator(".choice").first().tap(); await p.locator(".callout").waitFor(); await p.waitForTimeout(150);
   await shot(p, `quiz-phone-${theme}-after-answer.png`);
   const f = await p.evaluate(() => ({ focus: document.activeElement.dataset.action, nextBottom: Math.round(document.activeElement.getBoundingClientRect().bottom), vh: innerHeight }));
   check(`phone ${theme}: after answering, focus is on Next and it is on screen`, f.focus === "next" && f.nextBottom <= f.vh, JSON.stringify(f));
-  for (let i = 0; i < 25 && (await p.locator(".choice").count()); i++) {
-    if (await p.locator(".choice:not(:disabled)").count()) { await p.locator(".choice").nth(i % 2).tap(); await p.locator(".callout").waitFor(); }
-    await p.locator('[data-action="next"]').tap();
-  }
+  await p.locator('[data-action="next"]').tap();
+  await finishRound(p, true);
   await p.locator("text=Round complete").waitFor(); await p.waitForTimeout(150);
   await shot(p, `summary-phone-${theme}.png`);
   await p.goto(BASE + "#lsat/long"); await ready(p, ".passage-body");
@@ -162,7 +193,7 @@ for (const theme of ["light", "dark"]) {
     const t = await p.evaluate(() => document.querySelector(".lsat-card").getBoundingClientRect().top);
     check("menu: after choosing LSAT prep, the card sits just under the top bar", t > 52 && t < 90, "top=" + t);
     await menuShot(p, "menu-desktop-1440x900-after-choosing-lsat-prep-light.png");
-    await p.locator('[data-arg="subject:math"]').click();
+    await p.locator('[data-arg="subject:math"]').click(); await mcFirst(p);
     await p.locator(".choice").first().click(); await p.locator(".callout").waitFor();
     await p.locator("#menu-btn").click();
     await p.waitForTimeout(250);
@@ -184,6 +215,58 @@ for (const theme of ["light", "dark"]) {
   await p.context().close();
 }
 
+// ---- question formats: recall, explain why, put in order, match, reading ----
+const qtOut = path.join(out, "question-types");
+fs.mkdirSync(qtOut, { recursive: true });
+for (const f of fs.readdirSync(qtOut)) if (f.endsWith(".png")) fs.unlinkSync(path.join(qtOut, f));
+const qtShare = [];
+for (const [vp, theme, mobile] of [[{ width: 1440, height: 900 }, "light", false], [{ width: 1440, height: 900 }, "dark", false], [{ width: 390, height: 844 }, "light", true], [{ width: 390, height: 844 }, "dark", true]]) {
+  const p = await ctxFor(vp, theme, true, mobile);
+  const tag = (mobile ? "phone-390x844-" : "desktop-1440x900-") + theme;
+  const qshot = async (name) => { if (mobile) await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(120); const f = `${name}-${tag}.png`; await p.screenshot({ path: path.join(qtOut, f), fullPage: mobile }); if ((!mobile && theme === "light") || (mobile && theme === "dark")) qtShare.push(f); };
+  const go = async (s, ids) => { await p.evaluate(([s, ids]) => window.__studyLab.start("subject", [s], { ids }), [s, ids]); await p.locator("#q-stem").waitFor(); await p.evaluate(() => document.fonts.ready); };
+  const press = (loc) => (mobile ? loc.tap() : loc.click());
+  await p.goto(BASE); await ready(p);
+  const over = async (what) => { const o = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth); check(`${tag}: ${what} has no sideways scroll`, o <= 0, "overflow=" + o); };
+  // Recall: a typo accepted
+  await go("sci", ["sci-x0"]);
+  await p.locator("#typed-input").fill("mitochondira");
+  await qshot("01-recall-typing");
+  await press(p.locator('[data-action="submit"]')); await p.locator("#feedback").waitFor();
+  await qshot("02-recall-answered"); await over("Recall");
+  // Recall: wrong, with the override
+  await go("hist", ["hist-x0"]);
+  await p.locator("#typed-input").fill("not sure");
+  await press(p.locator('[data-action="submit"]')); await p.locator("#feedback").waitFor();
+  await qshot("03-recall-wrong-with-override");
+  // Explain why
+  await go("econ", ["econ-x5"]);
+  await p.locator("#explain-input").fill("Growth inside a TFSA is never taxed, so the whole return keeps compounding instead of losing a slice to tax each year.");
+  await qshot("04-explain-writing");
+  await press(p.locator('[data-action="reveal"]')); await p.locator(".model").waitFor();
+  await qshot("05-explain-model-answer-self-grade"); await over("Explain why");
+  // Put in order
+  await go("sci", ["sci-x7"]);
+  await press(p.locator('.order-row [data-action="move"][data-arg$=":down"]').first());
+  await qshot("06-order-arranging"); await over("Put in order");
+  await press(p.locator('[data-action="checkorder"]')); await p.locator("#feedback").waitFor();
+  await qshot("07-order-checked");
+  // Match
+  await go("eng", ["eng-x9"]);
+  const n = await p.locator('[data-action="pick"][data-arg^="L:"]').count();
+  await press(p.locator('[data-action="pick"][data-arg="L:0"]')); await press(p.locator('[data-action="pick"][data-arg="R:0"]'));
+  await press(p.locator('[data-action="pick"][data-arg="L:1"]')); await press(p.locator('[data-action="pick"][data-arg="R:2"]'));
+  await press(p.locator('[data-action="pick"][data-arg="L:2"]'));
+  await qshot("08-match-pairing"); await over("Match");
+  await press(p.locator('[data-action="pick"][data-arg="R:1"]'));
+  for (let i = 3; i < n; i++) { await press(p.locator(`[data-action="pick"][data-arg="L:${i}"]`)); await press(p.locator(`[data-action="pick"][data-arg="R:${i}"]`)); }
+  await press(p.locator('[data-action="checkmatch"]')); await p.locator("#feedback").waitFor();
+  await qshot("09-match-checked");
+  // Reading set in a school subject
+  await go("geo", ["geo-x10", "geo-x11", "geo-x12"]);
+  await qshot("10-reading-passage"); await over("Reading");
+  await p.context().close();
+}
 fs.copyFileSync(path.join(siteDir, "og.png"), path.join(out, "og.png"));
 // JPEG copies under 400 KB for sharing (needs python3 + Pillow).
 const share = process.env.SHARE_DIR || path.resolve(siteDir, "..", "review-share", "redesign");
@@ -209,6 +292,12 @@ const { execFileSync } = await import("node:child_process");
 console.log(execFileSync("python3", ["-c", py, out, share]).toString().trim());
 const menuShare = process.env.MENU_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu");
 console.log(execFileSync("python3", ["-c", py, menuOut, menuShare]).toString().trim());
+// Question formats: desktop light + phone dark copies for review.
+const qtShareDir = process.env.QT_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "question-types");
+const qtTmp = fs.mkdtempSync(path.join(out, ".qt-"));
+for (const f of qtShare) fs.copyFileSync(path.join(qtOut, f), path.join(qtTmp, f));
+console.log(execFileSync("python3", ["-c", py, qtTmp, qtShareDir]).toString().trim());
+fs.rmSync(qtTmp, { recursive: true });
 await browser.close(); server.kill();
 console.log(failures ? failures + " failed" : "all review checks passed");
 process.exitCode = failures ? 1 : 0;

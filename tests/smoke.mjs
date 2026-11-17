@@ -37,13 +37,54 @@ const wrongIndex = (page) => page.evaluate(() => {
   return it.order.findIndex((o) => o !== QMAP[it.qid].c[0]);
 });
 
-async function answerRound(page) {
+// Rounds now mix formats. Tests about multiple choice call mcFirst() so the rest of the round starts with
+// its multiple-choice questions (same questions, just reordered), keeping those checks deterministic.
+async function mcFirst(page) {
+  await page.locator("#q-stem").waitFor();
+  await page.evaluate(() => {
+    const { state, QMAP, render } = window.__studyLab;
+    const s = state.sess, rest = s.items.slice(s.idx);
+    const mc = (it) => !QMAP[it.qid].type;
+    s.items = s.items.slice(0, s.idx).concat(rest.filter(mc), rest.filter((it) => !mc(it)));
+    render(false, "stem");
+  });
+}
+const quizType = (page) => page.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess && state.sess.items[state.sess.idx]; return it ? QMAP[it.qid].type || "mc" : null; });
+// Answer whatever is on screen (any format) and wait for the feedback. right=true answers correctly.
+async function answerCurrent(page, right = false, tap = false) {
+  const press = (loc) => (tap ? loc.tap() : loc.click());
+  const type = await quizType(page);
+  if (type === "mc") {
+    const i = await page.evaluate((right) => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; const c = it.order.indexOf(QMAP[it.qid].c[0]); return right ? c : (c + 1) % it.order.length; }, right);
+    await press(page.locator(".choice").nth(right === null ? 0 : i));
+  } else if (type === "typed") {
+    const a = await page.evaluate(() => { const { state, QMAP } = window.__studyLab; return String(QMAP[state.sess.items[state.sess.idx].qid].a[0]); });
+    await page.locator("#typed-input").fill(right ? a : "zzqx");
+    await press(page.locator('[data-action="submit"]'));
+  } else if (type === "explain") {
+    await page.locator("#explain-input").fill("my attempt");
+    await press(page.locator('[data-action="reveal"]'));
+    await press(page.locator(`[data-action="grade"][data-arg="${right ? "got" : "missed"}"]`));
+  } else if (type === "order") {
+    if (right) await page.evaluate(() => { const { state, QMAP, render } = window.__studyLab; const it = state.sess.items[state.sess.idx]; it.order = QMAP[it.qid].items.map((_, i) => i); render(); });
+    await press(page.locator('[data-action="checkorder"]'));
+  } else if (type === "match") {
+    const n = await page.locator('[data-action="pick"][data-arg^="L:"]').count();
+    for (let i = 0; i < n; i++) {
+      await press(page.locator(`[data-action="pick"][data-arg="L:${i}"]`));
+      await press(page.locator(`[data-action="pick"][data-arg="R:${right ? i : (i + 1) % n}"]`));
+    }
+    await press(page.locator('[data-action="checkmatch"]'));
+  }
+  await page.locator("#feedback").waitFor();
+  return type;
+}
+async function answerRound(page, right = null) {
   let n = 0;
-  while (await page.locator(".choice").count()) {
-    await page.locator(".choice").first().click();
-    await page.locator(".callout").waitFor();
+  while ((await page.locator("#q-stem").count()) && n < 25) {
+    await answerCurrent(page, right === null ? n % 3 === 0 : right);
     await page.locator('[data-action="next"]').click();
-    if (++n > 20) break;
+    n++;
   }
   return n;
 }
@@ -62,8 +103,8 @@ try {
   check("home has a separate LSAT card", (await page.locator(".lsat-card").count()) === 1);
   check("header no longer says just 'Six subjects'", /plus LSAT prep/.test(await page.locator(".hero").innerText()));
   const nQ = await page.evaluate(() => window.__studyLab.QUESTIONS.length);
-  check("home loads only the 306 core questions (LSAT bank lazy)", nQ === 306, "n=" + nQ);
-  check("header counts all 356 questions", /356 questions/.test(await page.locator(".hero").innerText()));
+  check("home loads only the 384 core questions (LSAT bank lazy)", nQ === 384, "n=" + nQ);
+  check("header counts all 449 questions", /449 questions/.test(await page.locator(".hero").innerText()));
   check("lsat.js and supabase-js not fetched on the home page", lsatRequests.length === 0, lsatRequests.join(","));
   check("#app is no longer a page-wide live region", (await page.locator("#app[aria-live]").count()) === 0);
   check("empty mastery bars hidden before any progress", (await page.locator(".subject .bar, .lsat-card .bar").count()) === 0);
@@ -87,6 +128,7 @@ try {
   page.off("dialog", onDialog);
   await page.locator('[data-arg="subject:math"]').click();
   await page.locator(".question").waitFor();
+  await mcFirst(page);
   await page.locator('.segmented [data-arg="sure"]').click();
   await page.locator(".choice").nth(0).click();
   await page.locator(".callout").waitFor();
@@ -119,12 +161,11 @@ try {
   check("Cancel keeps the round and its #hash", (await page.locator(".question").count()) === 1 && (await page.evaluate(() => location.hash)) === "#math");
 
   let sawSecondTry = false, maxOf = 0;
-  for (let i = 0; i < 25 && (await page.locator(".choice").count()); i++) {
+  for (let i = 0; i < 25 && (await page.locator("#q-stem").count()); i++) {
     const h = await page.locator(".quiz-progress").innerText();
     if (/Second try/.test(h)) sawSecondTry = true;
     const m = /\/ (\d+)/.exec(h); if (m) maxOf = Math.max(maxOf, Number(m[1]));
-    await page.locator(".choice").first().click();
-    await page.locator(".callout").waitFor();
+    await answerCurrent(page, i % 2 === 1);
     await page.locator('[data-action="next"]').click();
   }
   await page.locator("text=Round complete").waitFor();
@@ -173,9 +214,10 @@ try {
   await hp.goto(BASE);
   await hp.locator(".subject").first().waitFor();
   check("saved progress from the live site is left byte-for-byte untouched on load", (await hp.evaluate(() => localStorage.getItem("study-lab-progress-v1"))) === LIVE_JSON);
-  check("saved LSAT progress counted on the home page without loading the LSAT bank", /2\/50 seen/i.test(await hp.locator(".lsat-card").innerText()) && (await hp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 306);
+  check("saved LSAT progress counted on the home page without loading the LSAT bank", /2\/65 seen/i.test(await hp.locator(".lsat-card").innerText()) && (await hp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 384);
   check("Due now is the same set on home: school subjects + LSAT noted", /\+ 1 LSAT/.test(await hp.locator(".metrics").first().innerText()));
   await hp.locator('[data-arg="subject:geo"]').click();
+  await mcFirst(hp);
   await hp.locator(".choice").first().click();
   await hp.locator(".callout").waitFor();
   const afterAns = await hp.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")));
@@ -237,7 +279,7 @@ try {
   const subjSubs = []; { let inS = false; for (const x of outline.items) { if (!x.sub) inS = x.label === "Subjects"; else if (inS) subjSubs.push(x.label); } }
   check("menu: one entry per page section, in page order", tops.length === outline.sections && JSON.stringify(tops) === JSON.stringify(["Today", "Subjects", "LSAT prep", "Mastery by subject", "How it works", "Backup and reset"]), JSON.stringify(tops));
   check("menu: subjects indented under Subjects, read from their h3s", JSON.stringify(subjSubs) === JSON.stringify(outline.tiles) && subjSubs.length === 6, JSON.stringify(subjSubs));
-  check("menu: How it works lists its 7 steps; every entry points at a real id", outline.items.filter((x) => x.sub && x.id.startsWith("howto-")).length === 7 && outline.items.every((x) => x.exists));
+  check("menu: How it works lists its 8 steps (incl. Question formats); every entry points at a real id", outline.items.filter((x) => x.sub && x.id.startsWith("howto-")).length === 8 && outline.items.every((x) => x.exists));
   await hp.mouse.move(700, 700);
   await hp.waitForTimeout(120);
   const stillOpen = !(await mstate()).hidden;
@@ -278,6 +320,7 @@ try {
   await hp.keyboard.press("Escape");
   // during a round: the home sections, a warning, keys stay with the menu, quiz shortcuts still work
   await hp.locator('[data-arg="subject:geo"]').click();
+  await mcFirst(hp);
   await hp.locator(".choice").first().click();
   await hp.locator(".callout").waitFor();
   await hp.locator('[data-action="next"]').click();
@@ -330,8 +373,9 @@ try {
   await lp.screenshot({ path: path.join(here, "screenshot-laptop-home.png"), fullPage: true });
   await lp.locator('[data-arg="lsat-short:lsat"]').click();
   await lp.locator(".question.stem").waitFor();
+  await mcFirst(lp);
   check("LSAT short: question 1 of 10", (await lp.locator(".quiz-progress").innerText()).includes("1 / 10"));
-  check("LSAT bank loaded on demand (356 questions)", (await lp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 356);
+  check("LSAT bank loaded on demand (449 questions)", (await lp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 449);
   check("LSAT round hash is #lsat/short", (await lp.evaluate(() => location.hash)) === "#lsat/short");
   const letters = await lp.locator(".choice .letter").allInnerTexts();
   check("LSAT short: five choices lettered A-E", letters.join("") === "ABCDE", letters.join(""));
@@ -433,6 +477,7 @@ try {
   await pp.evaluate(() => document.fonts.ready);
   await pp.screenshot({ path: path.join(here, "screenshot-phone-home.png"), fullPage: false });
   await pp.locator('[data-arg="subject:hist"]').tap();
+  await mcFirst(pp);
   await pp.locator(".choice").first().tap();
   await pp.locator(".callout").waitFor();
   const overflowQ = await pp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -533,6 +578,7 @@ try {
   const remote = await sp.evaluate(() => window.__fakeDb.row.data);
   check("sync: merged state written back to account", !!remote.cards.math0 && !!remote.cards.geo0);
   await sp.locator('[data-arg="subject:eng"]').click();
+  await mcFirst(sp);
   await sp.locator(".choice").first().click();
   await sp.waitForFunction(() => Object.keys(window.__fakeDb.row.data.cards).some((k) => k.startsWith("eng")), null, { timeout: 6000 });
   check("sync: new answers pushed to account", true);
@@ -558,6 +604,181 @@ try {
   check("sync: sign-in link flow still works after lazy load", true);
   check("#email input has a label", (await op.evaluate(() => document.getElementById("email").labels.length)) === 1);
   check("no console errors (signed-out sync)", oerr.length === 0, oerr.join(" | "));
+
+  // ---- new question formats: recall, explain why, put in order, match, reading sets ----
+  const tctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await localOnly(tctx);
+  await tctx.addInitScript((v) => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("study-lab-progress-v1", v); } }, LIVE_JSON);
+  const tp = await tctx.newPage();
+  const terr = watch(tp);
+  await tp.goto(BASE);
+  await tp.locator(".subject").first().waitFor();
+  const startIds = async (pg, key, ids) => { await pg.evaluate(([key, ids]) => window.__studyLab.start("subject", [key], { ids }), [key, ids]); await pg.locator("#q-stem").waitFor(); };
+  const readStore = (pg) => pg.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")));
+  const active = (pg) => pg.evaluate(() => { const a = document.activeElement; return { id: a.id, action: a.dataset.action || "", arg: a.dataset.arg || "", label: a.getAttribute("aria-label") || "" }; });
+  check("formats: every school subject has recall, explain, order, match and reading questions", await tp.evaluate(() => {
+    const { QUESTIONS } = window.__studyLab;
+    return ["math", "sci", "hist", "geo", "eng", "econ"].every((s) => ["typed", "explain", "order", "match"].every((t) => QUESTIONS.some((q) => q.s === s && q.type === t)) && QUESTIONS.some((q) => q.s === s && q.p));
+  }));
+
+  // Recall (typed): type from anywhere, Enter checks, small typos accepted, override, blank answers
+  await startIds(tp, "sci", ["sci-x0", "math-x0", "sci-x3"]);
+  check("recall: kicker labels the format 'Recall' and the input has a label", /Recall/i.test(await tp.locator(".quiz .kicker").innerText()) && (await tp.evaluate(() => document.getElementById("typed-input").labels.length)) === 1);
+  check("recall: confidence buttons still offered", (await tp.locator('.segmented [data-action="conf"]').count()) === 3);
+  await tp.keyboard.press("m");
+  check("recall: typing from anywhere jumps into the answer box (first key kept)", (await active(tp)).id === "typed-input" && (await tp.locator("#typed-input").inputValue()) === "m");
+  await tp.keyboard.type("itochondira");
+  await tp.keyboard.press("Enter");
+  await tp.locator("#feedback").waitFor();
+  check("recall: Enter checks; a small typo counts, with the right spelling shown", /Correct, allowing for spelling/.test(await tp.locator("#feedback").innerText()) && /mitochondria/.test(await tp.locator("#feedback").innerText()));
+  check("recall: focus moves to Next after checking", (await active(tp)).action === "next");
+  let sv = await readStore(tp);
+  check("recall: answer saved as a normal card", sv.cards["sci-x0"] && sv.cards["sci-x0"].k === 1 && sv.total === 8, JSON.stringify(sv.cards["sci-x0"]));
+  await tp.keyboard.press("Enter");
+  await tp.locator("#typed-input:not([readonly])").waitFor();
+  await tp.locator("#typed-input").focus();
+  await tp.keyboard.type("8");
+  check("recall: number keys type into the box instead of answering", (await tp.locator("#typed-input").inputValue()) === "8" && (await tp.evaluate(() => window.__studyLab.state.sess.picked)) === null);
+  await tp.keyboard.press("Enter");
+  await tp.locator("#feedback").waitFor();
+  check("recall: a wrong answer shows the answer and an 'I was right' override", /Not quite\. The answer is 9/.test(await tp.locator("#feedback").innerText()) && (await tp.locator('[data-action="override"]').count()) === 1);
+  const retriesBefore = await tp.evaluate(() => window.__studyLab.state.sess.items.length);
+  await tp.locator('[data-action="override"]').click();
+  sv = await readStore(tp);
+  check("recall: override counts it as right without double counting, and drops the second try", /Counted as right/.test(await tp.locator("#feedback").innerText()) && sv.cards["math-x0"].k === 1 && sv.cards["math-x0"].n === 1 && sv.total === 9 && sv.right === 9 && (await tp.evaluate(() => window.__studyLab.state.sess.items.length)) === retriesBefore - 1, JSON.stringify([sv.cards["math-x0"], sv.total, sv.right]));
+  await tp.locator('[data-action="next"]').click();
+  await tp.locator('[data-action="submit"]').click();
+  await tp.locator("#feedback").waitFor();
+  check("recall: a blank answer is a miss with no override", /No answer this time/.test(await tp.locator("#feedback").innerText()) && (await tp.locator('[data-action="override"]').count()) === 0);
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+
+  // Explain why: write, Ctrl+Enter shows the model answer, 1/2/3 self-grade, Partly = guess strength
+  await startIds(tp, "math", ["math-x5", "math-x6"]);
+  check("explain: labelled 'Explain why', no confidence question, textarea labelled", /Explain why/i.test(await tp.locator(".quiz .kicker").innerText()) && (await tp.locator('.segmented [data-action="conf"]').count()) === 0 && (await tp.evaluate(() => document.getElementById("explain-input").labels.length)) === 1);
+  await tp.locator("#explain-input").focus();
+  await tp.keyboard.type("Because 1 2 3 halves fit");
+  check("explain: number keys type into the explanation, not grade it", (await tp.locator("#explain-input").inputValue()) === "Because 1 2 3 halves fit" && (await tp.locator(".model").count()) === 0);
+  await tp.keyboard.press("Control+Enter");
+  await tp.locator(".model").waitFor();
+  check("explain: Ctrl+Enter shows your text beside the model answer and key points", /Because 1 2 3 halves fit/.test(await tp.locator(".mine").innerText()) && (await tp.locator(".keypoints li").count()) >= 2);
+  check("explain: focus moves to the first self-grade button", (await active(tp)).action === "grade");
+  await tp.keyboard.press("2");
+  await tp.locator("#feedback").waitFor();
+  sv = await readStore(tp);
+  check("explain: key 2 = Partly, saved at guess strength (box 1, back within a day)", /Partly/.test(await tp.locator("#feedback").innerText()) && sv.cards["math-x5"].b <= 1 && sv.cards["math-x5"].due - Date.now() < 864e5, JSON.stringify(sv.cards["math-x5"]));
+  await tp.keyboard.press("Enter");
+  await tp.locator('[data-action="reveal"]').click();
+  await tp.locator(".model").waitFor();
+  check("explain: an empty attempt still shows the model answer", /nothing this time/.test(await tp.locator(".mine").innerText()));
+  await tp.keyboard.press("1");
+  await tp.locator("#feedback").waitFor();
+  sv = await readStore(tp);
+  check("explain: key 1 = I had it, counted right", sv.cards["math-x6"].k === 1);
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+
+  // Put in order: arrow buttons, focus follows the moved item, live status, check
+  await startIds(tp, "hist", ["hist-x7"]);
+  const nItems = await tp.locator(".order-row").count();
+  check("order: labelled 'Put in order', 3+ rows, each with labelled up/down buttons", /Put in order/i.test(await tp.locator(".quiz .kicker").innerText()) && nItems >= 3 && (await tp.locator('.order-row [data-action="move"][aria-label^="Move "]').count()) === nItems * 2);
+  check("order: first up and last down are disabled", await tp.evaluate(() => { const b = document.querySelectorAll('[data-action="move"]'); return b[0].disabled && b[b.length - 1].disabled; }));
+  const firstDown = tp.locator('.order-row [data-action="move"][data-arg$=":down"]').first();
+  const movedV = (await firstDown.getAttribute("data-arg")).split(":")[0];
+  await firstDown.focus();
+  await tp.keyboard.press("Enter");
+  const afterMove = await tp.evaluate(() => window.__studyLab.state.sess.items[0].order);
+  const fa = await active(tp);
+  check("order: keyboard move swaps the item down and keeps focus on it", afterMove[1] === Number(movedV) && fa.action === "move" && fa.arg.startsWith(movedV + ":"), JSON.stringify(fa));
+  check("order: the move is announced", /now 2 of/.test(await tp.locator("#order-status").innerText()));
+  // Sort it with the buttons
+  for (let p = 0; p < nItems; p++) {
+    for (let g = 0; g < nItems; g++) {
+      const o = await tp.evaluate(() => window.__studyLab.state.sess.items[0].order);
+      if (o.indexOf(p) <= p) break;
+      await tp.locator(`[data-action="move"][data-arg="${p}:up"]`).click();
+    }
+  }
+  await tp.locator('[data-action="checkorder"]').click();
+  await tp.locator("#feedback").waitFor();
+  check("order: sorted with the buttons and graded correct", /Correct order/.test(await tp.locator("#feedback").innerText()) && (await tp.locator(".order-row.ok").count()) === nItems);
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+  await startIds(tp, "hist", ["hist-x8"]);
+  await tp.locator('[data-action="checkorder"]').click();
+  await tp.locator("#feedback").waitFor();
+  check("order: an unsorted check shows how many were in place and the right order", /in the right place/.test(await tp.locator("#feedback").innerText()) && (await tp.locator("#feedback .answer-list li").count()) === (await tp.locator(".order-row").count()));
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+
+  // Match: tap-to-pair, keyboard, aria-pressed, live status, Check disabled until every term is paired
+  await startIds(tp, "geo", ["geo-x9"]);
+  const nPairs = await tp.locator('[data-action="pick"][data-arg^="L:"]').count();
+  check("match: labelled 'Match', terms and meanings as buttons", /Match/i.test(await tp.locator(".quiz .kicker").innerText()) && nPairs >= 4 && (await tp.locator('[data-action="pick"][data-arg^="R:"]').count()) === nPairs);
+  check("match: Check disabled before pairing", await tp.locator('[data-action="checkmatch"]').isDisabled());
+  await tp.locator('[data-action="pick"][data-arg="L:0"]').click();
+  check("match: choosing a term marks it pressed and announces it", (await tp.locator('[data-arg="L:0"]').getAttribute("aria-pressed")) === "true" && /selected/.test(await tp.locator("#match-status").innerText()));
+  await tp.locator('[data-action="pick"][data-arg="R:0"]').click();
+  check("match: choosing a meaning pairs them (label and status say so)", /matched with/.test(await tp.locator('[data-arg="L:0"]').getAttribute("aria-label")) && /^Matched /.test(await tp.locator("#match-status").innerText()));
+  await tp.locator('[data-action="pick"][data-arg="L:1"]').focus();
+  await tp.keyboard.press("Enter");
+  check("match: keyboard selection keeps focus on the chosen term", (await active(tp)).arg === "L:1" && (await tp.locator('[data-arg="L:1"]').getAttribute("aria-pressed")) === "true");
+  await tp.locator('[data-action="pick"][data-arg="R:1"]').focus();
+  await tp.keyboard.press("Space");
+  check("match: Space on a meaning completes the pair", await tp.evaluate(() => window.__studyLab.state.sess.items[0].work.pairs[1] === 1));
+  for (let i = 2; i < nPairs; i++) {
+    await tp.locator(`[data-action="pick"][data-arg="L:${i}"]`).click();
+    await tp.locator(`[data-action="pick"][data-arg="R:${i === 2 ? 3 : i === 3 ? 2 : i}"]`).click();
+  }
+  check("match: Check enabled once every term is paired", !(await tp.locator('[data-action="checkmatch"]').isDisabled()));
+  await tp.locator('[data-action="checkmatch"]').click();
+  await tp.locator("#feedback").waitFor();
+  check("match: graded per pair, the swapped two shown with fixes", new RegExp(`${nPairs - 2} of ${nPairs} matched`).test(await tp.locator("#feedback").innerText()) && (await tp.locator(".match-done.bad").count()) === 2 && (await tp.locator(".match-done.bad .fix").count()) === 2);
+  sv = await readStore(tp);
+  check("match: a partly right match is saved as a miss", sv.cards["geo-x9"] && sv.cards["geo-x9"].k === 0);
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+
+  // Reading sets in school subjects: passage beside the questions, labelled 'Reading'
+  await startIds(tp, "econ", ["econ-x10", "econ-x11", "econ-x12"]);
+  const rdP = await tp.locator(".passage").boundingBox(), rdQ = await tp.locator(".split-main .quiz").boundingBox();
+  check("reading: school passage shown beside its questions, labelled 'Reading'", /Reading/i.test(await tp.locator(".quiz .kicker").innerText()) && rdP.x + rdP.width <= rdQ.x + 1 && (await tp.locator(".choice").count()) === 4);
+  await tp.keyboard.press("1");
+  await tp.locator("#feedback").waitFor();
+  check("reading: MC number shortcuts unchanged", (await tp.evaluate(() => window.__studyLab.state.sess.picked)) === 0);
+  await tp.locator('[data-action="end"]').click().catch(() => {});
+
+  // Progress compatibility: earlier cards untouched, new cards in the same format, survive a reload
+  sv = await readStore(tp);
+  const fmtOk = Object.values(sv.cards).every((c) => ["b", "due", "n", "k", "t"].every((k) => typeof c[k] === "number") && Object.keys(c).length === 5);
+  check("progress: live-site cards untouched; new formats saved as ordinary cards", ["math0", "lsat3", "lsat27"].every((k) => JSON.stringify(sv.cards[k]) === JSON.stringify(LIVE.cards[k])) && fmtOk && ["sci-x0", "math-x0", "math-x5", "hist-x7", "geo-x9", "econ-x10"].every((k) => sv.cards[k]));
+  await tp.goto(BASE); await tp.reload();
+  await tp.locator(".subject").first().waitFor();
+  const sv2 = await readStore(tp);
+  check("progress: new-format cards survive a reload", Object.keys(sv.cards).every((k) => JSON.stringify(sv2.cards[k]) === JSON.stringify(sv.cards[k])) && Object.keys(sv2.cards).length === Object.keys(sv.cards).length && /2\/65 seen/i.test(await tp.locator(".lsat-card").innerText()), JSON.stringify([Object.keys(sv.cards).length, Object.keys(sv2.cards).length, await tp.locator(".lsat-card").innerText()]).slice(0, 300));
+  check("no console errors (question formats)", terr.length === 0, terr.join(" | "));
+
+  // Phone, 390px dark: every format fits without sideways scrolling, before and after answering
+  const fctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: "dark" });
+  await localOnly(fctx);
+  const fp = await fctx.newPage();
+  const ferr = watch(fp);
+  await fp.goto(BASE);
+  await fp.locator(".subject").first().waitFor();
+  const phoneIds = await fp.evaluate(() => {
+    const { QUESTIONS } = window.__studyLab, out = [];
+    const subs = ["math", "sci", "hist", "geo", "eng", "econ"];
+    ["typed", "explain", "order", "match"].forEach((t, i) => { const s = subs[i % 6]; out.push(QUESTIONS.filter((q) => q.s === s && q.type === t).pop().id); });
+    out.push(QUESTIONS.find((q) => q.s === "eng" && q.p).id);
+    return out;
+  });
+  for (const id of phoneIds) {
+    await startIds(fp, id.split("-")[0], [id]);
+    const t = await quizType(fp);
+    const before = await fp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    const small = await fp.evaluate(() => [...document.querySelectorAll(".quiz button:not([disabled])")].filter((b) => b.offsetParent && b.getBoundingClientRect().height < 44 && !b.closest(".segmented")).map((b) => b.textContent.trim()));
+    await answerCurrent(fp, false, true);
+    const after = await fp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    check(`phone: ${t}${id.includes("x1") && t === "mc" ? " (reading)" : ""} fits 390px before and after answering, tap targets ≥44px`, before <= 0 && after <= 0 && small.length === 0, JSON.stringify({ id, before, after, small }));
+    await fp.locator('[data-action="end"]').tap().catch(() => {});
+  }
+  check("phone: match columns stack into one on narrow screens", await (async () => { await startIds(fp, "sci", [phoneIds[3]]); return fp.evaluate(() => { const c = document.querySelectorAll(".match-col"); return c[1].getBoundingClientRect().top > c[0].getBoundingClientRect().bottom - 1; }); })());
+  check("no console errors (phone formats)", ferr.length === 0, ferr.join(" | "));
 } catch (e) {
   failures++;
   console.log("FAIL exception: " + e.message);
