@@ -78,21 +78,20 @@ p { margin: 0 0 12px; }
   padding: 8px 10px; border-radius: 10px; color: var(--text); font-size: 0.95rem; font-weight: 600; line-height: 1.3; position: relative;
 }
 .menu-item.sub { padding: 6px 10px; font-size: 0.88rem; font-weight: 500; color: var(--muted); }
-/* Hover / keyboard focus: red text on a soft red tint (AA in both themes). The current section keeps its
-   red bar on the left, so it still stands out from the entry under the pointer. */
-.menu-item { transition: background-color .12s ease, color .12s ease; }
-.menu-item:hover, .menu-item:focus-visible, .menu-item.sub:hover, .menu-item.sub:focus-visible { background: var(--tint-soft); color: var(--red-text); }
+/* Hover / keyboard focus / finger-slide: a soft red pill fades and grows in behind the entry while its label
+   eases up in size and turns red. Motion is transform/opacity only (no layout shift); the label is capped at
+   95% width so the 1.04 scale never spills out of the panel. The current section keeps its red bar. */
+.menu-item { --ease-out: cubic-bezier(.2, .8, .2, 1); transition: color .22s var(--ease-out); isolation: isolate; }
+.menu-item::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--tint-soft);
+  opacity: 0; transform: scale(.96); transition: opacity .22s var(--ease-out), transform .22s var(--ease-out);
+}
+.menu-item .mi-label { display: inline-block; max-width: 95%; transform-origin: left center; transition: transform .22s var(--ease-out); will-change: transform; }
+.menu-item:hover, .menu-item:focus-visible, .menu-item.hl, .menu-item.sub:hover, .menu-item.sub:focus-visible, .menu-item.sub.hl { color: var(--red-text); }
+.menu-item:hover::after, .menu-item:focus-visible::after, .menu-item.hl::after { opacity: 1; transform: none; }
+.menu-item:hover .mi-label, .menu-item:focus-visible .mi-label, .menu-item.hl .mi-label { transform: scale(1.04); }
 .menu-item:focus-visible { outline-offset: -2px; }
 .menu-item[aria-current] { color: var(--red-text); }
-/* "Vibration" tick: a quick small shake on the entry you move onto. */
-.menu-item.nudge { animation: menu-nudge .2s cubic-bezier(.3, .7, .4, 1); }
-@keyframes menu-nudge {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(3px); }
-  50% { transform: translateX(-2px); }
-  75% { transform: translateX(1px); }
-  100% { transform: translateX(0); }
-}
 .menu-item[aria-current="location"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--red); }
 .steps h3.step { font-family: inherit; font-size: inherit; font-weight: 600; letter-spacing: normal; line-height: inherit; margin: 0; }
 .nav-right { display: flex; align-items: center; gap: 8px; }
@@ -428,7 +427,9 @@ textarea.explain-input { width: 100%; display: block; font-family: var(--sans); 
 }
 @media (prefers-reduced-motion: reduce) {
   .menu-panel:not([hidden]) { animation: none; }
-  .menu-item, .menu-item.nudge { animation: none; transition: none; }
+  .menu-item, .menu-item .mi-label, .menu-item::after { transition: none; }
+  .menu-item:hover .mi-label, .menu-item:focus-visible .mi-label, .menu-item.hl .mi-label { transform: none; }
+  .menu-item::after { transform: none; }
   .btn, .tile, .choice, .bar > div { transition: none; }
   .tile:hover, .choice:hover:not(:disabled) { transform: none; }
 }

@@ -780,90 +780,82 @@ try {
   check("phone: match columns stack into one on narrow screens", await (async () => { await startIds(fp, "sci", [phoneIds[3]]); return fp.evaluate(() => { const c = document.querySelectorAll(".match-col"); return c[1].getBoundingClientRect().top > c[0].getBoundingClientRect().bottom - 1; }); })());
   check("no console errors (phone formats)", ferr.length === 0, ferr.join(" | "));
 
-  // ---- Sections menu polish: red hover/focus, a visual "vibration" tick, optional Android vibrate ----
-  const stubVibrate = (supported) => (sup) => {
-    window.__vib = [];
-    if (sup) Object.defineProperty(Navigator.prototype, "vibrate", { configurable: true, value: function (p) { window.__vib.push(p); return true; } });
-    else { delete Navigator.prototype.vibrate; Object.defineProperty(Navigator.prototype, "vibrate", { configurable: true, value: undefined }); }
-  };
-  const menuCtx = async (opts, supported) => {
+  // ---- Sections menu: smooth Apple-style hover (red pill fades/grows in, label eases up in size) ----
+  const menuCtx = async (opts) => {
     const c = await browser.newContext(opts);
     await localOnly(c);
-    await c.addInitScript(stubVibrate(supported), supported);
+    await c.addInitScript(() => { window.__vib = []; if (navigator.vibrate) navigator.vibrate = function (p) { window.__vib.push(p); return true; }; });
     const pg = await c.newPage();
     return { c, pg, errs: watch(pg) };
   };
-  const nudged = (pg) => pg.evaluate(() => [...document.querySelectorAll("#menu-panel .menu-item.nudge")].map((b) => b.textContent));
-  const look = (pg, sel) => pg.evaluate((sel) => {
-    const b = document.querySelector(sel), cs = getComputedStyle(b), root = getComputedStyle(document.documentElement);
+  // Look of one entry: label colour and scale, pill opacity/colour, the current-section bar, and the expected theme colours.
+  const look = (pg, sel) => (typeof sel === "string" ? pg.locator(sel).first() : sel || pg.locator(":focus")).evaluate((b) => {
+    b = b || document.activeElement;
+    const cs = getComputedStyle(b), pill = getComputedStyle(b, "::after"), label = b.querySelector(".mi-label");
     const probe = document.createElement("span"); probe.style.color = "var(--red-text)"; probe.style.background = "var(--tint-soft)"; document.body.appendChild(probe);
-    const want = getComputedStyle(probe); const r = { color: cs.color, bg: cs.backgroundColor, red: want.color, tint: want.backgroundColor, bar: getComputedStyle(b, "::before").content }; probe.remove(); return r;
-  }, sel);
+    const want = getComputedStyle(probe);
+    const m = new DOMMatrix(getComputedStyle(label).transform === "none" ? undefined : getComputedStyle(label).transform);
+    const r = { text: b.textContent, color: cs.color, red: want.color, pillBg: pill.backgroundColor, tint: want.backgroundColor, pillOpacity: Number(pill.opacity), scale: Math.round(m.a * 1000) / 1000, bar: getComputedStyle(b, "::before").content, motion: pill.transitionProperty + " | " + getComputedStyle(label).transitionProperty, anim: cs.animationName };
+    probe.remove(); return r;
+  });
+  const boxes = (pg) => pg.evaluate(() => [...document.querySelectorAll("#menu-panel .menu-item")].map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height), Math.round(r.width)].join(","); }).join(";"));
+  const panelOverflow = (pg) => pg.evaluate(() => { const p = document.getElementById("menu-panel"); return p.scrollWidth - p.clientWidth; });
   for (const theme of ["light", "dark"]) {
-    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, colorScheme: theme }, true);
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, colorScheme: theme });
     await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
     await pg.evaluate(() => { const s = document.getElementById("subjects"); window.scrollTo(0, s.getBoundingClientRect().top + scrollY - 60); });
     await pg.locator("#menu-btn").click();
     await pg.locator("#menu-panel .menu-item").first().waitFor();
-    const target = pg.locator('#menu-panel .menu-item:not([aria-current])').nth(2);
+    await pg.waitForTimeout(300); // let the panel's open animation finish
+    const before = await boxes(pg);
+    const rest = await look(pg, '#menu-panel .menu-item:not([aria-current])');
+    check(`menu smooth ${theme}: entries at rest are not scaled and have no pill`, rest.scale === 1 && rest.pillOpacity === 0, JSON.stringify(rest));
+    check(`menu smooth ${theme}: motion is transform/opacity transitions only, no keyframe animation (shake removed)`, /opacity/.test(rest.motion) && /transform/.test(rest.motion) && !/width|height|top|left|margin|padding/.test(rest.motion) && rest.anim === "none", rest.motion);
+    const target = await pg.locator('#menu-panel .menu-item.sub').last().elementHandle(); // "Question formats", far from the current section
     await target.hover();
-    const n1 = await nudged(pg);
-    await pg.waitForTimeout(250);
-    const lk = await look(pg, '#menu-panel .menu-item:not([aria-current]):hover');
-    check(`menu polish ${theme}: hovered entry turns red text on a red tint`, lk.color === lk.red && lk.bg === lk.tint, JSON.stringify(lk));
+    await pg.waitForTimeout(80);
+    const mid = await look(pg, target);
+    await pg.waitForTimeout(300);
+    const lk = await look(pg, target);
+    const hovering = await target.evaluate((b) => b.matches(':hover'));
+    check(`menu smooth ${theme}: hovered entry eases up to ~1.04 with red text on a red pill`, hovering && lk.scale >= 1.03 && lk.scale <= 1.05 && lk.color === lk.red && lk.pillBg === lk.tint && lk.pillOpacity === 1, JSON.stringify(lk));
+    check(`menu smooth ${theme}: it transitions (part-way after 80ms), not a jump`, mid.scale > 1 && mid.scale < lk.scale, JSON.stringify(mid));
+    const afterBoxes = await boxes(pg);
+    check(`menu smooth ${theme}: no layout shift: every entry keeps its position and size`, afterBoxes === before, JSON.stringify([before, afterBoxes, await pg.evaluate(() => scrollY)]).slice(0, 400));
+    check(`menu smooth ${theme}: the grown label stays inside the panel (no sideways scroll in the menu)`, (await panelOverflow(pg)) <= 0 && (await pg.evaluate(() => { const b = document.querySelector("#menu-panel .menu-item:hover") || document.querySelector("#menu-panel .menu-item.sub:not([aria-current])"), l = b.querySelector(".mi-label").getBoundingClientRect(), r = b.getBoundingClientRect(); return l.right <= r.right - 2; })));
     const cur = await look(pg, '#menu-panel .menu-item[aria-current="location"]');
-    check(`menu polish ${theme}: current section keeps its red bar and no tint, so it differs from the hovered entry`, cur.bar !== "none" && cur.bg !== lk.tint && lk.bar === "none", JSON.stringify(cur));
-    check(`menu polish ${theme}: moving onto an entry gives it the shake tick`, n1.length === 1 && n1[0] === (await target.textContent()), JSON.stringify(n1));
-    check(`menu polish ${theme}: the tick class is removed after the ~200ms animation`, (await nudged(pg)).length === 0);
-    await pg.locator('#menu-panel .menu-item:not([aria-current])').nth(3).hover();
-    await pg.waitForTimeout(120);
-    await pg.locator('#menu-panel .menu-item:not([aria-current])').nth(3).hover({ position: { x: 20, y: 6 } });
-    const vib = await pg.evaluate(() => window.__vib);
-    check(`menu polish ${theme}: navigator.vibrate gets a short 8ms tick per new entry (not repeated on the same one)`, vib.length === 2 && vib.every((v) => v === 8), JSON.stringify(vib));
-    // keyboard: arrow keys tick and focus shows red
+    check(`menu smooth ${theme}: current section keeps its red bar and no pill, so it differs from the hovered entry`, cur.bar !== "none" && cur.pillOpacity === 0 && lk.bar === "none", JSON.stringify(cur));
+    // keyboard focus gets the same look
+    await pg.mouse.move(900, 700);
     await pg.locator("#menu-panel .menu-item").first().focus();
-    await pg.waitForTimeout(250);
     await pg.keyboard.press("ArrowDown");
-    const kn = await nudged(pg);
-    await pg.waitForTimeout(250);
-    const kf = await pg.evaluate(() => { const a = document.activeElement, cs = getComputedStyle(a); const p = document.createElement("span"); p.style.color = "var(--red-text)"; document.body.appendChild(p); const red = getComputedStyle(p).color; p.remove(); return { ok: a.matches(":focus-visible") && cs.color === red, text: a.textContent }; });
-    check(`menu polish ${theme}: ArrowDown ticks the newly focused entry and it shows red`, kn.length === 1 && kn[0] === kf.text && kf.ok, JSON.stringify([kn, kf]));
-    check(`menu polish ${theme}: no console errors`, errs.length === 0, errs.join(" | "));
+    await pg.waitForTimeout(300);
+    const kf = await look(pg, null);
+    check(`menu smooth ${theme}: ArrowDown focus shows the same grow + red pill`, kf.scale >= 1.03 && kf.color === kf.red && kf.pillOpacity === 1, JSON.stringify(kf));
+    check(`menu smooth ${theme}: no vibration any more`, (await pg.evaluate(() => window.__vib.length)) === 0);
+    check(`menu smooth ${theme}: no console errors`, errs.length === 0, errs.join(" | "));
     await c.close();
   }
   {
-    // Reduced motion: no shake, no vibration (colour still changes)
-    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" }, true);
+    // Reduced motion: colour and pill only, no scaling and no transitions
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
     await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
     await pg.locator("#menu-btn").click();
-    await pg.locator("#menu-panel .menu-item").nth(1).hover();
-    await pg.locator("#menu-panel .menu-item").nth(2).hover();
-    await pg.locator("#menu-panel .menu-item").nth(2).focus();
-    await pg.keyboard.press("ArrowDown");
-    const rm = { n: await nudged(pg), vib: await pg.evaluate(() => window.__vib), anim: await pg.evaluate(() => getComputedStyle(document.querySelectorAll("#menu-panel .menu-item")[3]).animationName) };
-    check("menu polish reduced motion: no shake and no vibration", rm.n.length === 0 && rm.vib.length === 0 && rm.anim === "none", JSON.stringify(rm));
-    check("menu polish reduced motion: no console errors", errs.length === 0, errs.join(" | "));
+    await pg.locator("#menu-panel .menu-item:not([aria-current])").nth(2).hover();
+    await pg.waitForTimeout(50);
+    const rm = await look(pg, pg.locator("#menu-panel .menu-item:not([aria-current])").nth(2));
+    check("menu smooth reduced motion: red colour and pill straight away, no scaling", rm.scale === 1 && rm.color === rm.red && rm.pillOpacity === 1, JSON.stringify(rm));
+    check("menu smooth reduced motion: no console errors", errs.length === 0, errs.join(" | "));
     await c.close();
   }
   {
-    // No Vibration API (iOS Safari, desktop Firefox): the shake still runs, nothing throws
-    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 } }, false);
-    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
-    check("menu polish: test browser really lacks navigator.vibrate here", await pg.evaluate(() => typeof navigator.vibrate !== "function"));
-    await pg.locator("#menu-btn").click();
-    await pg.locator("#menu-panel .menu-item").nth(1).hover();
-    const n = await nudged(pg);
-    await pg.locator("#menu-panel .menu-item").nth(1).focus();
-    await pg.keyboard.press("ArrowDown");
-    check("menu polish without vibrate support: shake still shown, no errors", n.length === 1 && errs.length === 0, errs.join(" | "));
-    await c.close();
-  }
-  {
-    // Phone: sliding a finger across the entries ticks each one it passes (and vibrates on Android)
-    const { c, pg, errs } = await menuCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, true);
+    // Phone: sliding a finger across the entries highlights the one under it, smoothly, without sideways scroll
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
     await pg.locator("#menu-btn").tap();
     await pg.locator("#menu-panel .menu-item").nth(3).waitFor();
+    await pg.waitForTimeout(300);
+    const before = await boxes(pg);
     const slide = await pg.evaluate(async () => {
       const its = [...document.querySelectorAll("#menu-panel .menu-item")].slice(1, 4);
       const list = document.querySelector("#menu-panel .menu-list");
@@ -872,14 +864,17 @@ try {
         const r = b.getBoundingClientRect();
         const t = new Touch({ identifier: 1, target: b, clientX: r.left + 30, clientY: r.top + r.height / 2 });
         list.dispatchEvent(new TouchEvent("touchmove", { touches: [t], bubbles: true }));
-        seen.push(b.classList.contains("nudge"));
-        await new Promise((res) => setTimeout(res, 90));
+        seen.push(document.querySelectorAll("#menu-panel .menu-item.hl").length === 1 && b.classList.contains("hl"));
+        await new Promise((res) => setTimeout(res, 60));
       }
-      return { seen, vib: window.__vib.length };
+      await new Promise((res) => setTimeout(res, 300));
+      const last = its[its.length - 1], m = new DOMMatrix(getComputedStyle(last.querySelector(".mi-label")).transform);
+      list.dispatchEvent(new TouchEvent("touchend", { touches: [], bubbles: true }));
+      return { seen, scale: Math.round(m.a * 1000) / 1000, after: document.querySelectorAll("#menu-panel .menu-item.hl").length };
     });
-    check("menu polish phone: a finger moving across entries ticks each one and vibrates", slide.seen.every(Boolean) && slide.vib === 3, JSON.stringify(slide));
+    check("menu smooth phone: a finger sliding across highlights one entry at a time (grown), cleared on lift", slide.seen.every(Boolean) && slide.scale >= 1.03 && slide.after === 0, JSON.stringify(slide));
     const ov = await pg.evaluate(() => document.documentElement.scrollWidth - innerWidth);
-    check("menu polish phone: shake causes no sideways scroll; no console errors", ov <= 0 && errs.length === 0, JSON.stringify({ ov, errs }));
+    check("menu smooth phone: no layout shift, no sideways scroll on the page or in the menu, no errors", (await boxes(pg)) === before && ov <= 0 && (await panelOverflow(pg)) <= 0 && errs.length === 0, JSON.stringify({ ov, errs }));
     await c.close();
   }
 } catch (e) {

@@ -64,39 +64,28 @@ export function initMenu(opts) {
   const hoverable = window.matchMedia("(hover: hover) and (pointer: fine)");
 
   const items = () => Array.from(list.querySelectorAll(".menu-item"));
-  // Moving onto a new entry (pointer, keyboard or a finger sliding across) gives it a quick visual shake,
-  // plus a very short vibration on phones that support it (Android). Nothing at all with reduced motion.
-  let lastItem = null, lastBuzz = 0;
-  function tick(b) {
-    if (!b || b === lastItem) return;
-    lastItem = b;
-    if (reduceMotion()) return;
-    b.classList.remove("nudge");
-    void b.offsetWidth; // restart the animation if it was mid-way
-    b.classList.add("nudge");
-    const now = Date.now();
-    const active = !navigator.userActivation || navigator.userActivation.hasBeenActive; // browsers ignore vibrate before a tap
-    if (typeof navigator.vibrate === "function" && active && now - lastBuzz > 70) {
-      lastBuzz = now;
-      try { navigator.vibrate(8); } catch (err) { /* unsupported: the shake is enough */ }
-    }
+  // A finger sliding across the open menu on a phone highlights the entry under it, like hover does
+  // with a mouse (the smooth grow and tint are all CSS transitions; see .menu-item.hl).
+  let touchItem = null;
+  function touchHighlight(b) {
+    if (b === touchItem) return;
+    if (touchItem) touchItem.classList.remove("hl");
+    touchItem = b;
+    if (b) b.classList.add("hl");
   }
-  list.addEventListener("animationend", (e) => { if (e.target.classList) e.target.classList.remove("nudge"); });
-  list.addEventListener("pointerover", (e) => { if (e.pointerType !== "touch") tick(e.target.closest(".menu-item")); });
-  list.addEventListener("focusin", (e) => tick(e.target.closest(".menu-item")));
-  list.addEventListener("pointerleave", () => { if (!list.contains(document.activeElement)) lastItem = null; });
   list.addEventListener("touchmove", (e) => {
     const t = e.touches[0];
     const el = t && document.elementFromPoint(t.clientX, t.clientY);
     const b = el && el.closest && el.closest(".menu-item");
-    if (b && list.contains(b)) tick(b);
+    touchHighlight(b && list.contains(b) ? b : null);
   }, { passive: true });
+  for (const ev of ["touchend", "touchcancel"]) list.addEventListener(ev, () => touchHighlight(null), { passive: true });
   function build() {
     const src = opts.source();
     live = !!src.live;
     const outline = src.el ? tagSections(src.el) : [];
-    list.innerHTML = outline.map((s) => `<li><button type="button" class="menu-item top" data-target="${s.id}">${esc(s.label)}</button>${
-      s.subs.length ? `<ul>${s.subs.map((x) => `<li><button type="button" class="menu-item sub" data-target="${x.id}">${esc(x.label)}</button></li>`).join("")}</ul>` : ""}</li>`).join("");
+    list.innerHTML = outline.map((s) => `<li><button type="button" class="menu-item top" data-target="${s.id}"><span class="mi-label">${esc(s.label)}</span></button>${
+      s.subs.length ? `<ul>${s.subs.map((x) => `<li><button type="button" class="menu-item sub" data-target="${x.id}"><span class="mi-label">${esc(x.label)}</span></button></li>`).join("")}</ul>` : ""}</li>`).join("");
     const note = opts.note ? opts.note() : "";
     if (noteEl) { noteEl.textContent = note; noteEl.hidden = !note; }
     spy();
@@ -131,7 +120,6 @@ export function initMenu(opts) {
     if (how === "click") pinned = true;
     if (open) return;
     open = true;
-    lastItem = null;
     build();
     panel.hidden = false;
     wrap.classList.add("open");

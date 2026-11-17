@@ -268,25 +268,28 @@ for (const [vp, theme, mobile] of [[{ width: 1440, height: 900 }, "light", false
   await qshot("10-reading-passage"); await over("Reading");
   await p.context().close();
 }
-// ---- Sections menu polish: hovered entry in red (desktop light + dark, 2x, cropped to the menu) ----
-const mpOut = path.join(out, "menu-polish");
-fs.mkdirSync(mpOut, { recursive: true });
-for (const theme of ["light", "dark"]) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+// ---- Sections menu: smooth hover (red pill + label grown to 1.04), desktop light + dark and phone dark, 2x ----
+const msOut = path.join(out, "menu-smooth");
+fs.mkdirSync(msOut, { recursive: true });
+for (const [theme, phone] of [["light", false], ["dark", false], ["dark", true]]) {
+  const ctx = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 }, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone });
   await ctx.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.STUDY_LAB_CONFIG={};" }));
   await ctx.addInitScript(([s, t]) => { if (sessionStorage.getItem("seeded")) return; sessionStorage.setItem("seeded", "1"); localStorage.setItem("study-lab-progress-v1", s); localStorage.setItem("study-lab-theme", t); }, [SEED, theme]);
   const p = await ctx.newPage();
   await p.goto(BASE); await ready(p);
   await p.evaluate(() => { const s = document.getElementById("subjects"); window.scrollTo(0, s.getBoundingClientRect().top + scrollY - 68); });
-  await p.locator("#menu-btn").hover();
+  if (phone) await p.locator("#menu-btn").tap(); else await p.locator("#menu-btn").hover();
   await p.waitForFunction(() => !document.getElementById("menu-panel").hidden);
-  await p.waitForTimeout(250);
-  const item = p.locator("#menu-panel .menu-item.sub:not([aria-current])").nth(2);
-  await item.hover(); await p.waitForTimeout(400);
+  await p.waitForTimeout(300);
+  const item = await p.locator("#menu-panel .menu-item.sub:not([aria-current])").nth(2).elementHandle();
+  if (phone) await item.evaluate((b) => { const r = b.getBoundingClientRect(); const t = new Touch({ identifier: 1, target: b, clientX: r.left + 30, clientY: r.top + r.height / 2 }); b.closest(".menu-list").dispatchEvent(new TouchEvent("touchmove", { touches: [t], bubbles: true })); });
+  else await item.hover();
+  await p.waitForTimeout(400);
+  const hov = await item.evaluate((b) => { const cs = getComputedStyle(b), pill = getComputedStyle(b, "::after"); return { color: cs.color, pill: pill.backgroundColor, opacity: pill.opacity, scale: new DOMMatrix(getComputedStyle(b.querySelector(".mi-label")).transform).a }; });
+  const tag = phone ? `phone-390x844-${theme}-finger-slide` : `desktop-${theme}`;
+  check(`menu smooth ${tag}: highlighted entry is red, on its pill, grown to ~1.04`, /^rgb\((200, 16, 46|255, 90, 95)\)/.test(hov.color) && hov.opacity === "1" && hov.scale > 1.03, JSON.stringify(hov));
   const r = await p.evaluate(() => document.getElementById("menu-panel").getBoundingClientRect().toJSON());
-  const hov = await p.evaluate(() => { const b = document.querySelector("#menu-panel .menu-item:hover"); const cs = getComputedStyle(b); return { color: cs.color, bg: cs.backgroundColor }; });
-  check(`menu polish ${theme}: hovered entry is drawn red on a tint`, /^rgb\((200, 16, 46|255, 90, 95)\)/.test(hov.color) && hov.bg !== "rgba(0, 0, 0, 0)", JSON.stringify(hov));
-  await p.screenshot({ path: path.join(mpOut, `menu-hover-desktop-${theme}.png`), clip: { x: 0, y: 0, width: Math.min(1440, r.right + 420), height: Math.min(900, r.bottom + 24) } });
+  await p.screenshot({ path: path.join(msOut, `menu-hover-${tag}.png`), clip: phone ? { x: 0, y: 0, width: 390, height: Math.min(844, r.bottom + 8) } : { x: 0, y: 0, width: Math.min(1440, r.right + 420), height: Math.min(900, r.bottom + 24) } });
   await ctx.close();
 }
 fs.copyFileSync(path.join(siteDir, "og.png"), path.join(out, "og.png"));
@@ -320,8 +323,8 @@ const qtTmp = fs.mkdtempSync(path.join(out, ".qt-"));
 for (const f of qtShare) fs.copyFileSync(path.join(qtOut, f), path.join(qtTmp, f));
 console.log(execFileSync("python3", ["-c", py, qtTmp, qtShareDir]).toString().trim());
 fs.rmSync(qtTmp, { recursive: true });
-const mpShare = process.env.MENU_POLISH_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu-polish");
-console.log(execFileSync("python3", ["-c", py, mpOut, mpShare]).toString().trim());
+const msShare = process.env.MENU_SMOOTH_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu-smooth");
+console.log(execFileSync("python3", ["-c", py, msOut, msShare]).toString().trim());
 await browser.close(); server.kill();
 console.log(failures ? failures + " failed" : "all review checks passed");
 process.exitCode = failures ? 1 : 0;
