@@ -52,11 +52,11 @@ python3 -m http.server 8000
    ```
    git init && git add . && git commit -m "Study Lab"
    git branch -M main
-   git remote add origin https://github.com/<you>/study-lab.git
+   git remote add origin https://github.com/liamsmith059/study-lab.git
    git push -u origin main
    ```
 3. In the repo: Settings > Pages > Build and deployment > Source: "Deploy from a branch", Branch: `main`, folder `/ (root)`. Save.
-4. After a minute the site is live at `https://<you>.github.io/study-lab/`.
+4. After a minute the site is live at `https://liamsmith059.github.io/study-lab/`.
 
 Each later push to `main` redeploys automatically.
 
@@ -65,7 +65,7 @@ Each later push to `main` redeploys automatically.
 1. Create a free project at https://supabase.com.
 2. In the SQL Editor, run `supabase/schema.sql`.
 3. Authentication > URL Configuration:
-   - Site URL: `https://<you>.github.io/study-lab/`
+   - Site URL: `https://liamsmith059.github.io/study-lab/`
    - Redirect URLs: add the same URL (and `http://localhost:8000/` if you want to test locally).
 4. Project Settings > API: copy the Project URL and the `anon` public key into `config.js`, then commit and push.
 
@@ -78,7 +78,7 @@ When you sign in, the device's progress and the account's progress are merged: f
 1. Buy a domain from any registrar.
 2. In the repo: Settings > Pages > Custom domain, enter e.g. `study.example.com` and save (GitHub adds a `CNAME` file).
 3. At the registrar, add DNS records:
-   - Subdomain (`study.example.com`): a `CNAME` record pointing to `<you>.github.io`.
+   - Subdomain (`study.example.com`): a `CNAME` record pointing to `liamsmith059.github.io`.
    - Root domain (`example.com`): `A` records to `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`.
 4. When DNS has propagated, tick "Enforce HTTPS".
 5. If you use sync, update the Supabase Site URL and Redirect URLs to the new domain.
