@@ -217,6 +217,98 @@ try {
   await hp.locator("#theme-toggle").click();
   check("toggle back to light (theme-color #f5f5f7)", (await hp.evaluate(() => document.documentElement.dataset.theme + " " + document.querySelector('meta[name="theme-color"]').content)) === "light #f5f5f7");
   check("progress format still the same keys", JSON.stringify(Object.keys(await hp.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")))).sort()) === JSON.stringify(Object.keys(LIVE).sort()));
+  // ---- Sections menu (desktop) ----
+  await hp.goto(BASE);
+  await hp.locator(".subject").first().waitFor();
+  const mstate = () => hp.evaluate(() => ({ exp: document.getElementById("menu-btn").getAttribute("aria-expanded"), hidden: document.getElementById("menu-panel").hidden, focus: document.activeElement.id || document.activeElement.className }));
+  const m0 = await hp.evaluate(() => { const b = document.getElementById("menu-btn"); const r = b.getBoundingClientRect(); return { exp: b.getAttribute("aria-expanded"), ctl: b.getAttribute("aria-controls"), name: b.textContent.trim(), hidden: document.getElementById("menu-panel").hidden, left: r.left, svg: b.querySelector("svg").getAttribute("aria-hidden") }; });
+  check("menu: 'Sections' button at the top left, aria-expanded=false, aria-controls the panel", m0.exp === "false" && m0.ctl === "menu-panel" && m0.name === "Sections" && m0.hidden && m0.left < 40 && m0.svg === "true", JSON.stringify(m0));
+  await hp.mouse.move(700, 600);
+  await hp.locator("#menu-btn").hover();
+  await hp.waitForFunction(() => document.getElementById("menu-btn").getAttribute("aria-expanded") === "true");
+  check("menu: hovering opens the dropdown", !(await mstate()).hidden);
+  const outline = await hp.evaluate(() => {
+    const items = [...document.querySelectorAll("#menu-panel .menu-item")].map((b) => ({ sub: b.classList.contains("sub"), label: b.textContent, id: b.dataset.target, exists: !!document.getElementById(b.dataset.target) }));
+    const sections = [...document.querySelectorAll("#app > *")].filter((el) => el.querySelector("h2") && el.tagName !== "FOOTER").length;
+    const tiles = [...document.querySelectorAll("#subjects h3")].map((h) => h.textContent.trim());
+    return { items, sections, tiles };
+  });
+  const tops = outline.items.filter((x) => !x.sub).map((x) => x.label);
+  const subjSubs = []; { let inS = false; for (const x of outline.items) { if (!x.sub) inS = x.label === "Subjects"; else if (inS) subjSubs.push(x.label); } }
+  check("menu: one entry per page section, in page order", tops.length === outline.sections && JSON.stringify(tops) === JSON.stringify(["Today", "Subjects", "LSAT prep", "Mastery by subject", "How it works", "Backup and reset"]), JSON.stringify(tops));
+  check("menu: subjects indented under Subjects, read from their h3s", JSON.stringify(subjSubs) === JSON.stringify(outline.tiles) && subjSubs.length === 6, JSON.stringify(subjSubs));
+  check("menu: How it works lists its 7 steps; every entry points at a real id", outline.items.filter((x) => x.sub && x.id.startsWith("howto-")).length === 7 && outline.items.every((x) => x.exists));
+  await hp.mouse.move(700, 700);
+  await hp.waitForTimeout(120);
+  const stillOpen = !(await mstate()).hidden;
+  await hp.waitForTimeout(500);
+  check("menu: leaving it closes after a short delay (no flicker)", stillOpen && (await mstate()).hidden);
+  // keyboard
+  await hp.locator("#menu-btn").focus();
+  await hp.keyboard.press("ArrowDown");
+  const k1 = await hp.evaluate(() => ({ exp: document.getElementById("menu-btn").getAttribute("aria-expanded"), f: document.activeElement.textContent }));
+  await hp.keyboard.press("ArrowDown");
+  const k2 = await hp.evaluate(() => document.activeElement.textContent);
+  await hp.keyboard.press("End");
+  const k3 = await hp.evaluate(() => document.activeElement.textContent);
+  await hp.keyboard.press("Escape");
+  const k4 = await mstate();
+  check("menu keys: ArrowDown opens on the first entry, arrows/End move, Escape closes and returns focus", k1.exp === "true" && k1.f === "Today" && k2 === "Subjects" && k3 === "Backup and reset" && k4.hidden && k4.focus === "menu-btn", JSON.stringify([k1, k2, k3, k4]));
+  await hp.keyboard.press("Enter");
+  const k5 = await mstate();
+  await hp.keyboard.press("Tab");
+  const k6 = await hp.evaluate(() => document.activeElement.className);
+  for (let i = 0; i < 25 && (await hp.evaluate(() => document.getElementById("menu-panel").contains(document.activeElement))); i++) await hp.keyboard.press("Tab");
+  check("menu keys: Enter toggles it open, Tab walks the entries, tabbing out closes it", !k5.hidden && /menu-item/.test(k6) && (await mstate()).hidden, JSON.stringify([k5, k6]));
+  await hp.locator("#menu-btn").click();
+  check("menu: click opens it (pinned)", !(await mstate()).hidden);
+  await hp.mouse.click(1000, 500);
+  check("menu: clicking outside closes it", (await mstate()).hidden);
+  await hp.locator("#menu-btn").click();
+  await hp.locator("#menu-panel .menu-item", { hasText: "Backup and reset" }).click();
+  await hp.waitForFunction(() => Math.abs(document.getElementById("backup").getBoundingClientRect().top - document.getElementById("nav").getBoundingClientRect().height - 16) < 3 || innerHeight + scrollY >= document.documentElement.scrollHeight - 2);
+  const jump = await hp.evaluate(() => ({ open: document.getElementById("backup").open, top: document.getElementById("backup").getBoundingClientRect().top, nav: document.getElementById("nav").getBoundingClientRect().height, f: document.activeElement.textContent, hidden: document.getElementById("menu-panel").hidden }));
+  check("menu: choosing an entry scrolls below the sticky bar, opens it, focuses its heading, closes", jump.open && jump.top >= jump.nav && jump.f === "Backup and reset" && jump.hidden, JSON.stringify(jump));
+  await hp.evaluate(() => { document.getElementById("backup").open = false; });
+  await hp.evaluate(() => document.getElementById("subjects").scrollIntoView());
+  await hp.evaluate(() => window.scrollBy(0, -40));
+  await hp.locator("#menu-btn").click();
+  const cur = await hp.evaluate(() => [...document.querySelectorAll('#menu-panel [aria-current="location"]')].map((b) => b.textContent));
+  check("menu: highlights the section you are reading", JSON.stringify(cur) === JSON.stringify(["Subjects"]), JSON.stringify(cur));
+  await hp.keyboard.press("Escape");
+  // during a round: the home sections, a warning, keys stay with the menu, quiz shortcuts still work
+  await hp.locator('[data-arg="subject:geo"]').click();
+  await hp.locator(".choice").first().click();
+  await hp.locator(".callout").waitFor();
+  await hp.locator('[data-action="next"]').click();
+  await hp.locator("#q-stem").waitFor();
+  await hp.locator("#menu-btn").focus();
+  await hp.keyboard.press("ArrowDown");
+  const rq = await hp.evaluate(() => ({ note: document.querySelector(".menu-note").hidden ? "" : document.querySelector(".menu-note").textContent, n: document.querySelectorAll("#menu-panel .menu-item").length, first: document.activeElement.textContent }));
+  await hp.keyboard.press("2");
+  const pickedInMenu = await hp.evaluate(() => window.__studyLab.state.sess.picked);
+  await hp.keyboard.press("Escape");
+  await hp.mouse.click(5, 400);
+  await hp.keyboard.press("2");
+  const pickedAfter = await hp.evaluate(() => window.__studyLab.state.sess.picked);
+  check("menu in a round: lists the home sections with a 'ends this round' note", rq.n === outline.items.length && /ends this round/.test(rq.note) && rq.first === "Today", JSON.stringify(rq));
+  check("menu in a round: number keys inside the menu don't answer; after closing, shortcuts work", pickedInMenu === null && pickedAfter === 1, JSON.stringify([pickedInMenu, pickedAfter]));
+  await hp.locator('[data-action="next"]').click();
+  await hp.locator("#q-stem").waitFor();
+  let menuAsk = "";
+  hp.once("dialog", (d) => { menuAsk = d.message(); d.dismiss(); });
+  await hp.locator("#menu-btn").click();
+  await hp.locator("#menu-panel .menu-item", { hasText: "LSAT prep" }).click();
+  await hp.waitForTimeout(150);
+  check("menu in a round: asks before leaving; Cancel keeps the round and returns focus", /leave/i.test(menuAsk) && (await hp.locator(".question").count()) === 1 && (await mstate()).focus === "menu-btn", menuAsk);
+  hp.once("dialog", (d) => d.accept());
+  await hp.locator("#menu-btn").click();
+  await hp.locator("#menu-panel .menu-item", { hasText: "LSAT prep" }).click();
+  await hp.locator(".subject").first().waitFor();
+  await hp.waitForTimeout(1200); // smooth scroll
+  const landed = await hp.evaluate(() => ({ t: document.querySelector(".lsat-card").getBoundingClientRect().top, end: innerHeight + scrollY >= document.documentElement.scrollHeight - 2, y: scrollY, f: document.activeElement.id, h: location.href }));
+  // (a short page can't bring the card all the way up; then the page must be at its end with the card on screen)
+  check("menu in a round + OK: home, scrolled to LSAT prep", landed.h === BASE && landed.f === "lsat-title" && ((landed.t > 52 && landed.t < 120) || (landed.end && landed.t > 52 && landed.t < 700)), JSON.stringify(landed));
   check("no console errors (history/theme)", herr.length === 0, herr.join(" | "));
 
   // dark mode follows the device until the reader picks one
@@ -372,6 +464,33 @@ try {
   check("phone LSAT: no horizontal overflow", overflowL <= 0, "overflow=" + overflowL);
   await pp.screenshot({ path: path.join(here, "screenshot-phone-lsat.png"), fullPage: true });
   check("no console errors (phone)", perr.length === 0, perr.join(" | "));
+
+  // ---- Sections menu on a 390px phone, with reduced motion ----
+  const mphone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+  await localOnly(mphone);
+  const mp = await mphone.newPage();
+  const mperr = watch(mp);
+  const fit = () => mp.evaluate(() => {
+    const r = (s) => document.querySelector(s).getBoundingClientRect();
+    const m = r("#menu-btn"), w = r(".wordmark"), s = r("#nav-slot"), t = r("#theme-toggle");
+    return { a: w.left - m.right, b: s.left - w.right, c: t.left - s.right, right: t.right, h: Math.max(m.height, s.height), slot: document.getElementById("nav-slot").textContent };
+  });
+  await mp.goto(BASE);
+  await mp.locator(".subject").first().waitFor();
+  const pf = await fit();
+  check("390px: Sections, wordmark, Subjects and theme toggle fit on one line", pf.a >= 6 && pf.b >= 6 && pf.c >= 0 && pf.right <= 375 && pf.h < 40, JSON.stringify(pf));
+  await mp.locator("#menu-btn").tap();
+  const sheet = await mp.evaluate(() => { const p = document.getElementById("menu-panel"), r = p.getBoundingClientRect(); return { left: r.left, width: r.width, top: r.top, bottom: r.bottom, scrolls: p.scrollHeight > p.clientHeight, oy: getComputedStyle(p).overflowY, exp: document.getElementById("menu-btn").getAttribute("aria-expanded") }; });
+  check("390px: tapping opens a full-width sheet under the bar that scrolls", sheet.exp === "true" && sheet.left === 0 && sheet.width === 390 && sheet.top >= 51 && sheet.bottom <= 844 && sheet.oy === "auto", JSON.stringify(sheet));
+  await mp.locator("#menu-panel .menu-item", { hasText: "Second tries" }).tap();
+  const inst = await mp.evaluate(() => ({ top: document.getElementById("howto-second-tries").closest("li").getBoundingClientRect().top, open: document.getElementById("howto").open, end: innerHeight + scrollY >= document.documentElement.scrollHeight - 2 }));
+  check("390px + reduced motion: entry jumps there instantly and opens How it works", inst.open && ((inst.top >= 52 && inst.top < 120) || (inst.end && inst.top > 52 && inst.top < 844)), JSON.stringify(inst));
+  await mp.goto(BASE + "#math");
+  await mp.locator(".question").waitFor();
+  const pr = await fit();
+  check("390px round: Sections, wordmark, 'End round' and toggle still fit", pr.slot === "End round" && pr.a >= 6 && pr.b >= 6 && pr.right <= 375 && pr.h < 40, JSON.stringify(pr));
+  check("no console errors (menu phone)", mperr.length === 0, mperr.join(" | "));
+  await mphone.close();
 
   // ---- sync mode with a fake Supabase ----
   const fake = `

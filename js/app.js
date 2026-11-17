@@ -4,6 +4,9 @@ import {
   applyAnswer, subjectStats, whenText, encodeBackup, decodeBackup, loadLsat, dueCounts, weakestTopic, dayKey,
 } from "./engine.js";
 import { createSync, syncConfigured, authInUrl } from "./sync.js";
+import { initMenu, tagSections, scrollToSection } from "./menu.js";
+
+let menu = null; // the top bar's Sections menu, set up once the first view is ready
 
 // ---------- storage ----------
 let storageOk = true;
@@ -144,6 +147,9 @@ function showHome() {
   state.view = "home";
   sync.flush();
   render(true, "h1");
+  // Arrived here from the Sections menu during a round or summary: continue to the chosen section.
+  // Wait a frame: after Back, the browser restores the home page's old scroll position first.
+  if (state.pendingSection) { const id = state.pendingSection; state.pendingSection = null; requestAnimationFrame(() => setTimeout(() => scrollToSection(id), 0)); }
 }
 // Leave a round or summary for the subject list, going back through history when we pushed an entry.
 function goHome() {
@@ -548,7 +554,7 @@ function homeView() {
   ${seenAll ? `<section class="card panel"><h2>Mastery by subject</h2><p class="small muted">Mastery grows as questions move to longer review intervals; mastered means a week or more.</p>${bars}</section>` : ""}
   ${syncSection()}
   <details class="card panel howto" id="howto"${howOpen ? " open" : ""}><summary><h2>How it works</h2><span class="teaser small">Recall, spacing and rising difficulty, in a one-minute read.</span></summary>
-    <ol class="steps">${steps.map(([t, d]) => `<li><strong>${esc(t)}</strong><div class="small muted">${esc(d)}</div></li>`).join("")}</ol>
+    <ol class="steps">${steps.map(([t, d]) => `<li><h3 class="step">${esc(t)}</h3><div class="small muted">${esc(d)}</div></li>`).join("")}</ol>
   </details>
   <details class="card panel" id="backup"><summary><h2>Backup and reset</h2></summary>
     <p>Copy this code to move progress to another browser, or paste a code here (codes from the original Study Lab Page work too).</p>
@@ -606,8 +612,10 @@ function render(scrollTop = false, focus) {
   const newBody = document.querySelector(".passage-body");
   if (newBody && keepScroll && keepScroll.key === newBody.dataset.key) newBody.scrollTop = keepScroll.top;
   if (scrollTop) window.scrollTo(0, 0);
+  if (state.view === "home") tagSections(root);
   updateNav();
   placeFocus(focus, had);
+  if (menu) menu.refresh();
 }
 
 // The top bar lives outside #app: "Subjects" on the home page, "End round" during a round.
@@ -617,6 +625,22 @@ function updateNav() {
   const mode = state.view === "quiz" ? "end" : state.view === "summary" ? "back" : "subjects";
   navSlot.dataset.nav = mode;
   navSlot.textContent = mode === "end" ? "End round" : "Subjects";
+}
+// Sections menu (js/menu.js; `menu` is declared near the top). It always lists the home page's sections: on the home page it reads the
+// live page; during a round or summary it reads a freshly built copy of the home page, and choosing an
+// entry goes home first (asking before leaving a round in progress), then scrolls to that section.
+function homeOutline() {
+  if (state.view === "home") return { el: root, live: true };
+  const t = document.createElement("div");
+  t.innerHTML = homeView();
+  return { el: t, live: false };
+}
+function goToSection(id) {
+  if (state.view === "home") return scrollToSection(id);
+  if (inProgress() && !window.confirm(LEAVE_MSG)) return false;
+  state.pendingSection = id;
+  goHome();
+  return true;
 }
 const nav = document.getElementById("nav");
 if (nav) nav.addEventListener("click", (e) => {
@@ -736,7 +760,12 @@ function routeOnLoad() {
   start(r.mode, r.keys, { how: "push" });
 }
 
+menu = initMenu({
+  source: homeOutline,
+  go: goToSection,
+  note: () => (inProgress() ? "Opening a section ends this round (you'll be asked first)." : state.view !== "home" ? "Sections of the home page." : ""),
+});
 render();
 routeOnLoad();
 sync.init();
-window.__studyLab = { state, QUESTIONS, QMAP, loadLsat }; // handy for debugging in the console
+window.__studyLab = { state, QUESTIONS, QMAP, loadLsat, menu }; // handy for debugging in the console

@@ -51,6 +51,39 @@ p { margin: 0 0 12px; }
   border-bottom: 1px solid var(--line-soft);
 }
 .wordmark { appearance: none; border: 0; background: none; padding: 6px 0; cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 1.05rem; letter-spacing: -0.03em; }
+.nav-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+/* Sections menu: hover (mouse) or click/tap to open; lists the page's h2 sections and their h3s. */
+.menu { position: relative; }
+.menu-btn {
+  appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 6px 12px 6px 10px;
+  border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--text); font-size: 0.92rem; font-weight: 500; white-space: nowrap;
+}
+.menu-btn:hover, .menu.open .menu-btn { border-color: var(--red); color: var(--red-text); }
+.menu-icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.menu.open .menu-icon path { stroke: var(--red); }
+/* invisible bridge so the pointer can travel from the button to the panel without closing it */
+.menu.open::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 12px; }
+.menu-panel {
+  position: absolute; top: calc(100% + 10px); left: 0; z-index: 30; width: 300px; max-height: calc(100vh - var(--nav-h) - 24px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px; border-radius: 16px; background: var(--card); border: 1px solid var(--line-soft); box-shadow: var(--shadow-hover);
+}
+:root[data-theme="dark"] .menu-panel { border-color: var(--line); }
+.menu-panel:not([hidden]) { animation: menu-in .16s cubic-bezier(.2, .8, .2, 1); }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px); } }
+.menu-note { margin: 4px 10px 8px; font-size: 0.82rem; line-height: 1.4; color: var(--muted); }
+.menu-list, .menu-list ul { list-style: none; margin: 0; padding: 0; }
+.menu-list ul { margin: 0 0 4px 12px; padding-left: 8px; border-left: 1px solid var(--line); }
+.menu-item {
+  appearance: none; border: 0; background: none; cursor: pointer; display: block; width: 100%; text-align: left;
+  padding: 8px 10px; border-radius: 10px; color: var(--text); font-size: 0.95rem; font-weight: 600; line-height: 1.3; position: relative;
+}
+.menu-item.sub { padding: 6px 10px; font-size: 0.88rem; font-weight: 500; color: var(--muted); }
+.menu-item:hover, .menu-item:focus-visible { background: var(--fill); color: var(--text); }
+.menu-item:focus-visible { outline-offset: -2px; }
+.menu-item[aria-current] { color: var(--red-text); }
+.menu-item[aria-current]:hover { color: var(--text); }
+.menu-item[aria-current="location"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--red); }
+.steps h3.step { font-family: inherit; font-size: inherit; font-weight: 600; letter-spacing: normal; line-height: inherit; margin: 0; }
 .nav-right { display: flex; align-items: center; gap: 8px; }
 .nav-link, .theme-toggle {
   appearance: none; border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 0.92rem; font-weight: 500;
@@ -279,6 +312,16 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
   .tagline-short { display: inline; }
   .theme-toggle .label { display: none; }
   .theme-toggle { padding: 6px 10px; }
+  .nav-left { gap: 10px; }
+  .menu-btn { padding: 6px 10px; }
+  .menu.open::after { display: none; }
+  .menu-panel {
+    position: fixed; left: 0; right: 0; top: calc(var(--nav-h) + env(safe-area-inset-top)); width: auto;
+    max-height: calc(100vh - var(--nav-h) - env(safe-area-inset-top)); max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-top));
+    padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); border-radius: 0 0 18px 18px; border-width: 0 0 1px;
+  }
+  .menu-item { padding: 11px 12px; font-size: 1rem; }
+  .menu-item.sub { padding: 9px 12px; font-size: 0.95rem; }
   .howto summary { flex-wrap: wrap; }
   .howto .teaser { margin-left: 0; text-align: left; flex-basis: 100%; order: 3; }
   .question { font-size: 1.85rem; }
@@ -291,6 +334,7 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
   .weak .btn { margin: 8px 0 0; display: flex; width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .menu-panel:not([hidden]) { animation: none; }
   .btn, .tile, .choice, .bar > div { transition: none; }
   .tile:hover, .choice:hover:not(:disabled) { transform: none; }
 }

@@ -24,6 +24,7 @@ index.html          page shell (all paths are relative, so it works under /<repo
 config.js           Supabase URL + anon key (blank = local-only, sign-in hidden)
 css/styles.css      styles (light + dark mode, phone and laptop); colour tokens at the top
 js/theme.js         applies the saved theme before first paint and runs the toggle
+js/menu.js          the Sections dropdown in the top bar, built from the page's h2/h3 headings
 og.png              1200x630 share image (regenerate with tests/make-og.mjs)
 js/questions.js     the question bank
 js/lsat.js          the LSAT bank (Logical Reasoning items + Reading Comprehension passages)

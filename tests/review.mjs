@@ -62,6 +62,9 @@ const PAIRS = [
   ["--muted", "--bg", "secondary text on the page"], ["--muted", "--card", "secondary text on cards"], ["--muted", "--card-2", "secondary text on goal box"],
   ["--muted-on-fill", "--fill", "unselected segmented control / pace pill"], ["--text", "--fill", "grey button text"],
   ["--ok", "--ok-soft", "green tag on a correct-answer tint"], ["--ok", "--card", "green feedback heading"],
+  ["--text", "--card", "Sections menu: section entry"], ["--muted", "--card", "Sections menu: sub-heading entry and note"],
+  ["--red-text", "--card", "Sections menu: current section"], ["--text", "--fill", "Sections menu: hovered / focused entry"],
+  ["--red-text", "--bg", "Sections button while open (on the top bar)"],
 ];
 const report = {};
 for (const theme of ["light", "dark"]) {
@@ -138,6 +141,49 @@ for (const theme of ["light", "dark"]) {
   await shot(p, `lsat-phone-${theme}-expanded-scrolled.png`);
   await p.context().close();
 }
+// ---- Sections menu: open on desktop (both themes) and phone, and the page after choosing an entry ----
+const menuOut = path.join(out, "menu");
+fs.mkdirSync(menuOut, { recursive: true });
+const menuShot = (p, name) => p.screenshot({ path: path.join(menuOut, name) });
+const panelFits = (p) => p.evaluate(() => { const r = document.getElementById("menu-panel").getBoundingClientRect(); return { open: !document.getElementById("menu-panel").hidden, ok: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, n: document.querySelectorAll(".menu-item").length }; });
+for (const theme of ["light", "dark"]) {
+  const p = await ctxFor({ width: 1440, height: 900 }, theme);
+  await p.goto(BASE); await ready(p);
+  await p.evaluate(() => { const s = document.getElementById("subjects"); window.scrollTo(0, s.getBoundingClientRect().top + scrollY - 68); });
+  await p.locator("#menu-btn").hover();
+  await p.waitForFunction(() => !document.getElementById("menu-panel").hidden);
+  await p.waitForTimeout(250);
+  const f = await panelFits(p);
+  check(`menu ${theme} desktop: opens on hover and fits on screen`, f.open && f.ok && f.n > 10, JSON.stringify(f));
+  await menuShot(p, `menu-desktop-1440x900-open-${theme}.png`);
+  if (theme === "light") {
+    await p.locator("#menu-panel .menu-item", { hasText: "LSAT prep" }).click();
+    await p.waitForTimeout(1200); // smooth scroll
+    const t = await p.evaluate(() => document.querySelector(".lsat-card").getBoundingClientRect().top);
+    check("menu: after choosing LSAT prep, the card sits just under the top bar", t > 52 && t < 90, "top=" + t);
+    await menuShot(p, "menu-desktop-1440x900-after-choosing-lsat-prep-light.png");
+    await p.locator('[data-arg="subject:math"]').click();
+    await p.locator(".choice").first().click(); await p.locator(".callout").waitFor();
+    await p.locator("#menu-btn").click();
+    await p.waitForTimeout(250);
+    await menuShot(p, "menu-desktop-1440x900-open-during-round-light.png");
+  }
+  await p.context().close();
+}
+{
+  const p = await ctxFor({ width: 390, height: 844 }, "light", true, true);
+  await p.goto(BASE); await ready(p);
+  await p.locator("#menu-btn").tap();
+  await p.waitForTimeout(250);
+  const f = await panelFits(p);
+  check("menu light phone: tap opens a full-width sheet that fits", f.open && f.ok, JSON.stringify(f));
+  await menuShot(p, "menu-phone-390x844-open-light.png");
+  await p.locator("#menu-panel .menu-item", { hasText: "Science" }).tap();
+  await p.waitForTimeout(1200);
+  await menuShot(p, "menu-phone-390x844-after-choosing-science-light.png");
+  await p.context().close();
+}
+
 fs.copyFileSync(path.join(siteDir, "og.png"), path.join(out, "og.png"));
 // JPEG copies under 400 KB for sharing (needs python3 + Pillow).
 const share = process.env.SHARE_DIR || path.resolve(siteDir, "..", "review-share", "redesign");
@@ -161,6 +207,8 @@ for f in sorted(os.listdir(src)):
 `;
 const { execFileSync } = await import("node:child_process");
 console.log(execFileSync("python3", ["-c", py, out, share]).toString().trim());
+const menuShare = process.env.MENU_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu");
+console.log(execFileSync("python3", ["-c", py, menuOut, menuShare]).toString().trim());
 await browser.close(); server.kill();
 console.log(failures ? failures + " failed" : "all review checks passed");
 process.exitCode = failures ? 1 : 0;
