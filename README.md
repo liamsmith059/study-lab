@@ -36,7 +36,7 @@ index.html          page shell (all paths are relative, so it works under /<repo
 config.js           Supabase URL + anon key (blank = local-only, sign-in hidden)
 css/styles.css      styles (light + dark mode, phone and laptop); colour tokens at the top
 js/theme.js         applies the saved theme before first paint and runs the toggle
-js/menu.js          the Sections dropdown in the top bar, built from the page's h2/h3 headings
+js/menu.js          the Sections dropdown in the top bar, built from the page's h2/h3 headings (entries turn red on hover/focus and give a small shake as you move across them, plus an 8 ms vibration on Android; both off with reduced motion)
 og.png              1200x630 share image (regenerate with tests/make-og.mjs)
 js/questions.js     the question bank (multiple choice)
 js/practice.js      Recall / Explain why / Put in order / Match questions and the short reading passages, per subject

@@ -94,8 +94,9 @@ const PAIRS = [
   ["--muted-on-fill", "--fill", "unselected segmented control / pace pill"], ["--text", "--fill", "grey button text"],
   ["--ok", "--ok-soft", "green tag on a correct-answer tint"], ["--ok", "--card", "green feedback heading"],
   ["--text", "--card", "Sections menu: section entry"], ["--muted", "--card", "Sections menu: sub-heading entry and note"],
-  ["--red-text", "--card", "Sections menu: current section"], ["--text", "--fill", "Sections menu: hovered / focused entry"],
+  ["--red-text", "--card", "Sections menu: current section"],
   ["--red-text", "--bg", "Sections button while open (on the top bar)"],
+  ["--red-text", "--tint-soft", "Sections menu: hovered / focused entry (red on red tint)"],
   ["--text", "--card-2", "Explain why: 'You wrote' box"], ["--muted-on-fill", "--card", "Explain why: 1/2/3 key hints on grade buttons"],
   ["--text", "--ok-soft", "Order/Match: text on a correct row"], ["--text", "--tint-soft", "Order/Match: text on a wrong row or selected term"],
   ["--muted", "--tint-soft", "Match: crossed-out wrong meaning"], ["--muted", "--ok-soft", "Order: position number on a correct row"],
@@ -267,6 +268,27 @@ for (const [vp, theme, mobile] of [[{ width: 1440, height: 900 }, "light", false
   await qshot("10-reading-passage"); await over("Reading");
   await p.context().close();
 }
+// ---- Sections menu polish: hovered entry in red (desktop light + dark, 2x, cropped to the menu) ----
+const mpOut = path.join(out, "menu-polish");
+fs.mkdirSync(mpOut, { recursive: true });
+for (const theme of ["light", "dark"]) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+  await ctx.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.STUDY_LAB_CONFIG={};" }));
+  await ctx.addInitScript(([s, t]) => { if (sessionStorage.getItem("seeded")) return; sessionStorage.setItem("seeded", "1"); localStorage.setItem("study-lab-progress-v1", s); localStorage.setItem("study-lab-theme", t); }, [SEED, theme]);
+  const p = await ctx.newPage();
+  await p.goto(BASE); await ready(p);
+  await p.evaluate(() => { const s = document.getElementById("subjects"); window.scrollTo(0, s.getBoundingClientRect().top + scrollY - 68); });
+  await p.locator("#menu-btn").hover();
+  await p.waitForFunction(() => !document.getElementById("menu-panel").hidden);
+  await p.waitForTimeout(250);
+  const item = p.locator("#menu-panel .menu-item.sub:not([aria-current])").nth(2);
+  await item.hover(); await p.waitForTimeout(400);
+  const r = await p.evaluate(() => document.getElementById("menu-panel").getBoundingClientRect().toJSON());
+  const hov = await p.evaluate(() => { const b = document.querySelector("#menu-panel .menu-item:hover"); const cs = getComputedStyle(b); return { color: cs.color, bg: cs.backgroundColor }; });
+  check(`menu polish ${theme}: hovered entry is drawn red on a tint`, /^rgb\((200, 16, 46|255, 90, 95)\)/.test(hov.color) && hov.bg !== "rgba(0, 0, 0, 0)", JSON.stringify(hov));
+  await p.screenshot({ path: path.join(mpOut, `menu-hover-desktop-${theme}.png`), clip: { x: 0, y: 0, width: Math.min(1440, r.right + 420), height: Math.min(900, r.bottom + 24) } });
+  await ctx.close();
+}
 fs.copyFileSync(path.join(siteDir, "og.png"), path.join(out, "og.png"));
 // JPEG copies under 400 KB for sharing (needs python3 + Pillow).
 const share = process.env.SHARE_DIR || path.resolve(siteDir, "..", "review-share", "redesign");
@@ -298,6 +320,8 @@ const qtTmp = fs.mkdtempSync(path.join(out, ".qt-"));
 for (const f of qtShare) fs.copyFileSync(path.join(qtOut, f), path.join(qtTmp, f));
 console.log(execFileSync("python3", ["-c", py, qtTmp, qtShareDir]).toString().trim());
 fs.rmSync(qtTmp, { recursive: true });
+const mpShare = process.env.MENU_POLISH_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu-polish");
+console.log(execFileSync("python3", ["-c", py, mpOut, mpShare]).toString().trim());
 await browser.close(); server.kill();
 console.log(failures ? failures + " failed" : "all review checks passed");
 process.exitCode = failures ? 1 : 0;

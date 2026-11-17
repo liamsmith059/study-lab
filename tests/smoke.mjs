@@ -779,6 +779,109 @@ try {
   }
   check("phone: match columns stack into one on narrow screens", await (async () => { await startIds(fp, "sci", [phoneIds[3]]); return fp.evaluate(() => { const c = document.querySelectorAll(".match-col"); return c[1].getBoundingClientRect().top > c[0].getBoundingClientRect().bottom - 1; }); })());
   check("no console errors (phone formats)", ferr.length === 0, ferr.join(" | "));
+
+  // ---- Sections menu polish: red hover/focus, a visual "vibration" tick, optional Android vibrate ----
+  const stubVibrate = (supported) => (sup) => {
+    window.__vib = [];
+    if (sup) Object.defineProperty(Navigator.prototype, "vibrate", { configurable: true, value: function (p) { window.__vib.push(p); return true; } });
+    else { delete Navigator.prototype.vibrate; Object.defineProperty(Navigator.prototype, "vibrate", { configurable: true, value: undefined }); }
+  };
+  const menuCtx = async (opts, supported) => {
+    const c = await browser.newContext(opts);
+    await localOnly(c);
+    await c.addInitScript(stubVibrate(supported), supported);
+    const pg = await c.newPage();
+    return { c, pg, errs: watch(pg) };
+  };
+  const nudged = (pg) => pg.evaluate(() => [...document.querySelectorAll("#menu-panel .menu-item.nudge")].map((b) => b.textContent));
+  const look = (pg, sel) => pg.evaluate((sel) => {
+    const b = document.querySelector(sel), cs = getComputedStyle(b), root = getComputedStyle(document.documentElement);
+    const probe = document.createElement("span"); probe.style.color = "var(--red-text)"; probe.style.background = "var(--tint-soft)"; document.body.appendChild(probe);
+    const want = getComputedStyle(probe); const r = { color: cs.color, bg: cs.backgroundColor, red: want.color, tint: want.backgroundColor, bar: getComputedStyle(b, "::before").content }; probe.remove(); return r;
+  }, sel);
+  for (const theme of ["light", "dark"]) {
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, colorScheme: theme }, true);
+    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
+    await pg.evaluate(() => { const s = document.getElementById("subjects"); window.scrollTo(0, s.getBoundingClientRect().top + scrollY - 60); });
+    await pg.locator("#menu-btn").click();
+    await pg.locator("#menu-panel .menu-item").first().waitFor();
+    const target = pg.locator('#menu-panel .menu-item:not([aria-current])').nth(2);
+    await target.hover();
+    const n1 = await nudged(pg);
+    await pg.waitForTimeout(250);
+    const lk = await look(pg, '#menu-panel .menu-item:not([aria-current]):hover');
+    check(`menu polish ${theme}: hovered entry turns red text on a red tint`, lk.color === lk.red && lk.bg === lk.tint, JSON.stringify(lk));
+    const cur = await look(pg, '#menu-panel .menu-item[aria-current="location"]');
+    check(`menu polish ${theme}: current section keeps its red bar and no tint, so it differs from the hovered entry`, cur.bar !== "none" && cur.bg !== lk.tint && lk.bar === "none", JSON.stringify(cur));
+    check(`menu polish ${theme}: moving onto an entry gives it the shake tick`, n1.length === 1 && n1[0] === (await target.textContent()), JSON.stringify(n1));
+    check(`menu polish ${theme}: the tick class is removed after the ~200ms animation`, (await nudged(pg)).length === 0);
+    await pg.locator('#menu-panel .menu-item:not([aria-current])').nth(3).hover();
+    await pg.waitForTimeout(120);
+    await pg.locator('#menu-panel .menu-item:not([aria-current])').nth(3).hover({ position: { x: 20, y: 6 } });
+    const vib = await pg.evaluate(() => window.__vib);
+    check(`menu polish ${theme}: navigator.vibrate gets a short 8ms tick per new entry (not repeated on the same one)`, vib.length === 2 && vib.every((v) => v === 8), JSON.stringify(vib));
+    // keyboard: arrow keys tick and focus shows red
+    await pg.locator("#menu-panel .menu-item").first().focus();
+    await pg.waitForTimeout(250);
+    await pg.keyboard.press("ArrowDown");
+    const kn = await nudged(pg);
+    await pg.waitForTimeout(250);
+    const kf = await pg.evaluate(() => { const a = document.activeElement, cs = getComputedStyle(a); const p = document.createElement("span"); p.style.color = "var(--red-text)"; document.body.appendChild(p); const red = getComputedStyle(p).color; p.remove(); return { ok: a.matches(":focus-visible") && cs.color === red, text: a.textContent }; });
+    check(`menu polish ${theme}: ArrowDown ticks the newly focused entry and it shows red`, kn.length === 1 && kn[0] === kf.text && kf.ok, JSON.stringify([kn, kf]));
+    check(`menu polish ${theme}: no console errors`, errs.length === 0, errs.join(" | "));
+    await c.close();
+  }
+  {
+    // Reduced motion: no shake, no vibration (colour still changes)
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" }, true);
+    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
+    await pg.locator("#menu-btn").click();
+    await pg.locator("#menu-panel .menu-item").nth(1).hover();
+    await pg.locator("#menu-panel .menu-item").nth(2).hover();
+    await pg.locator("#menu-panel .menu-item").nth(2).focus();
+    await pg.keyboard.press("ArrowDown");
+    const rm = { n: await nudged(pg), vib: await pg.evaluate(() => window.__vib), anim: await pg.evaluate(() => getComputedStyle(document.querySelectorAll("#menu-panel .menu-item")[3]).animationName) };
+    check("menu polish reduced motion: no shake and no vibration", rm.n.length === 0 && rm.vib.length === 0 && rm.anim === "none", JSON.stringify(rm));
+    check("menu polish reduced motion: no console errors", errs.length === 0, errs.join(" | "));
+    await c.close();
+  }
+  {
+    // No Vibration API (iOS Safari, desktop Firefox): the shake still runs, nothing throws
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 1280, height: 800 } }, false);
+    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
+    check("menu polish: test browser really lacks navigator.vibrate here", await pg.evaluate(() => typeof navigator.vibrate !== "function"));
+    await pg.locator("#menu-btn").click();
+    await pg.locator("#menu-panel .menu-item").nth(1).hover();
+    const n = await nudged(pg);
+    await pg.locator("#menu-panel .menu-item").nth(1).focus();
+    await pg.keyboard.press("ArrowDown");
+    check("menu polish without vibrate support: shake still shown, no errors", n.length === 1 && errs.length === 0, errs.join(" | "));
+    await c.close();
+  }
+  {
+    // Phone: sliding a finger across the entries ticks each one it passes (and vibrates on Android)
+    const { c, pg, errs } = await menuCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, true);
+    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
+    await pg.locator("#menu-btn").tap();
+    await pg.locator("#menu-panel .menu-item").nth(3).waitFor();
+    const slide = await pg.evaluate(async () => {
+      const its = [...document.querySelectorAll("#menu-panel .menu-item")].slice(1, 4);
+      const list = document.querySelector("#menu-panel .menu-list");
+      const seen = [];
+      for (const b of its) {
+        const r = b.getBoundingClientRect();
+        const t = new Touch({ identifier: 1, target: b, clientX: r.left + 30, clientY: r.top + r.height / 2 });
+        list.dispatchEvent(new TouchEvent("touchmove", { touches: [t], bubbles: true }));
+        seen.push(b.classList.contains("nudge"));
+        await new Promise((res) => setTimeout(res, 90));
+      }
+      return { seen, vib: window.__vib.length };
+    });
+    check("menu polish phone: a finger moving across entries ticks each one and vibrates", slide.seen.every(Boolean) && slide.vib === 3, JSON.stringify(slide));
+    const ov = await pg.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    check("menu polish phone: shake causes no sideways scroll; no console errors", ov <= 0 && errs.length === 0, JSON.stringify({ ov, errs }));
+    await c.close();
+  }
 } catch (e) {
   failures++;
   console.log("FAIL exception: " + e.message);
