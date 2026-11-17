@@ -14,7 +14,9 @@
   --card-border: transparent;
   --display: "Inter Tight", Inter, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --sans: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --nav-h: 52px;
+  --nav-h: 52px;          /* top bar height, not counting a phone's notch inset */
+  --nav-total: calc(var(--nav-h) + env(safe-area-inset-top, 0px)); /* what the sticky bar really covers */
+  --jump-gap: 16px;      /* breathing room above a heading you jump to */
   color-scheme: light;
 }
 /* Dark mode: Tesla palette, black page, near-black cards, hairline borders. */
@@ -46,10 +48,16 @@ p { margin: 0 0 12px; }
 /* ---------- top bar ---------- */
 .nav {
   position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
-  height: var(--nav-h); padding: 0 28px; padding-top: env(safe-area-inset-top);
+  height: var(--nav-total); padding: 0 28px; padding-top: env(safe-area-inset-top);
   background: var(--nav-bg); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--line-soft);
 }
+/* Jump targets (Menu entries, #hash links, scrollIntoView) land below the sticky bar, never under it. */
+#app > [id], #app h2, #app h3, .tile, #q-stem { scroll-margin-top: calc(var(--nav-total) + var(--jump-gap)); }
+/* Top-bar controls keep their light 36px look but get a 44px touch target from an invisible halo. */
+.menu-btn, .nav-link, .theme-toggle, .wordmark { position: relative; }
+.menu-btn::before, .nav-link::before, .theme-toggle::before, .wordmark::before { content: ""; position: absolute; inset: -5px; /* 4px past the 1px border: 36 + 2×4 = 44px */ border-radius: 999px; }
+.wordmark::before { inset: -6px -4px; }
 .wordmark { appearance: none; border: 0; background: none; padding: 6px 0; cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 1.05rem; letter-spacing: -0.03em; }
 .nav-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
 /* Sections menu: hover (mouse) or click/tap to open; lists the page's h2 sections and their h3s. */
@@ -64,7 +72,7 @@ p { margin: 0 0 12px; }
 /* invisible bridge so the pointer can travel from the button to the panel without closing it */
 .menu.open::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 12px; }
 .menu-panel {
-  position: absolute; top: calc(100% + 10px); left: 0; z-index: 30; width: 300px; max-height: calc(100vh - var(--nav-h) - 24px); overflow-y: auto; overscroll-behavior: contain;
+  position: absolute; top: calc(100% + 10px); left: 0; z-index: 30; width: 300px; max-height: calc(100vh - var(--nav-total) - 24px); overflow-y: auto; overscroll-behavior: contain;
   padding: 8px; border-radius: 16px; background: var(--card); border: 1px solid var(--line-soft); box-shadow: var(--shadow-hover);
 }
 :root[data-theme="dark"] .menu-panel { border-color: var(--line); }
@@ -100,6 +108,7 @@ p { margin: 0 0 12px; }
   min-height: 36px; padding: 6px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px;
 }
 .nav-link:hover, .theme-toggle:hover { color: var(--red-text); }
+.nav-link[hidden] { display: none; }
 .theme-toggle { border: 1px solid var(--line); color: var(--text); }
 .theme-toggle .icon { font-size: 0.95rem; line-height: 1; }
 
@@ -347,7 +356,7 @@ textarea.explain-input { width: 100%; display: block; font-family: var(--sans); 
    with bottom padding and a fade so the last line is never cut off. */
 @media (min-width: 1000px) {
   .wrap.wide { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
-  .passage { position: sticky; top: calc(var(--nav-h) + 16px); margin: 16px 0 0; display: flex; flex-direction: column; max-height: calc(100vh - var(--nav-h) - 32px); }
+  .passage { position: sticky; top: calc(var(--nav-total) + 16px); margin: 16px 0 0; display: flex; flex-direction: column; max-height: calc(100vh - var(--nav-total) - 32px); }
   .passage-body {
     flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 36px 0;
     scrollbar-gutter: stable; scrollbar-color: var(--line) transparent;
@@ -364,14 +373,14 @@ textarea.explain-input { width: 100%; display: block; font-family: var(--sans); 
 @media (max-width: 999px) {
   .split { display: block; }
   .lsat-bar {
-    display: flex; align-items: center; gap: 10px; position: sticky; top: var(--nav-h); z-index: 15;
+    display: flex; align-items: center; gap: 10px; position: sticky; top: var(--nav-total); z-index: 15;
     margin: 0 -24px; padding: 8px 24px; background: var(--nav-bg); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
     border-bottom: 1px solid var(--line-soft);
   }
   .lsat-bar-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--display); font-weight: 600; letter-spacing: -0.02em; }
   .lsat-bar-q { flex: none; font-size: 0.9rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .btn.lsat-bar-btn { flex: none; min-height: 36px; padding: 6px 14px; font-size: 0.9rem; }
-  .passage { margin-top: 16px; scroll-margin-top: calc(var(--nav-h) + 60px); }
+  .passage { margin-top: 16px; scroll-margin-top: calc(var(--nav-total) + 60px); }
   .passage.peek .passage-body {
     max-height: 9.8em; overflow: hidden;
     -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
@@ -408,8 +417,8 @@ textarea.explain-input { width: 100%; display: block; font-family: var(--sans); 
   .menu-btn { padding: 6px 10px; }
   .menu.open::after { display: none; }
   .menu-panel {
-    position: fixed; left: 0; right: 0; top: calc(var(--nav-h) + env(safe-area-inset-top)); width: auto;
-    max-height: calc(100vh - var(--nav-h) - env(safe-area-inset-top)); max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-top));
+    position: fixed; left: 0; right: 0; top: var(--nav-total); width: auto;
+    max-height: calc(100vh - var(--nav-total)); max-height: calc(100dvh - var(--nav-total));
     padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); border-radius: 0 0 18px 18px; border-width: 0 0 1px;
   }
   .menu-item { padding: 11px 12px; font-size: 1rem; }

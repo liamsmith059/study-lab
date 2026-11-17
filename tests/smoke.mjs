@@ -259,12 +259,12 @@ try {
   await hp.locator("#theme-toggle").click();
   check("toggle back to light (theme-color #f5f5f7)", (await hp.evaluate(() => document.documentElement.dataset.theme + " " + document.querySelector('meta[name="theme-color"]').content)) === "light #f5f5f7");
   check("progress format still the same keys", JSON.stringify(Object.keys(await hp.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")))).sort()) === JSON.stringify(Object.keys(LIVE).sort()));
-  // ---- Sections menu (desktop) ----
+  // ---- Menu (desktop) ----
   await hp.goto(BASE);
   await hp.locator(".subject").first().waitFor();
   const mstate = () => hp.evaluate(() => ({ exp: document.getElementById("menu-btn").getAttribute("aria-expanded"), hidden: document.getElementById("menu-panel").hidden, focus: document.activeElement.id || document.activeElement.className }));
   const m0 = await hp.evaluate(() => { const b = document.getElementById("menu-btn"); const r = b.getBoundingClientRect(); return { exp: b.getAttribute("aria-expanded"), ctl: b.getAttribute("aria-controls"), name: b.textContent.trim(), hidden: document.getElementById("menu-panel").hidden, left: r.left, svg: b.querySelector("svg").getAttribute("aria-hidden") }; });
-  check("menu: 'Sections' button at the top left, aria-expanded=false, aria-controls the panel", m0.exp === "false" && m0.ctl === "menu-panel" && m0.name === "Sections" && m0.hidden && m0.left < 40 && m0.svg === "true", JSON.stringify(m0));
+  check("menu: 'Menu' button at the top left, aria-expanded=false, aria-controls the panel", m0.exp === "false" && m0.ctl === "menu-panel" && m0.name === "Menu" && m0.hidden && m0.left < 40 && m0.svg === "true", JSON.stringify(m0));
   await hp.mouse.move(700, 600);
   await hp.locator("#menu-btn").hover();
   await hp.waitForFunction(() => document.getElementById("menu-btn").getAttribute("aria-expanded") === "true");
@@ -313,7 +313,7 @@ try {
   check("menu: choosing an entry scrolls below the sticky bar, opens it, focuses its heading, closes", jump.open && jump.top >= jump.nav && jump.f === "Backup and reset" && jump.hidden, JSON.stringify(jump));
   await hp.evaluate(() => { document.getElementById("backup").open = false; });
   await hp.evaluate(() => document.getElementById("subjects").scrollIntoView());
-  await hp.evaluate(() => window.scrollBy(0, -40));
+  await hp.evaluate(() => window.scrollBy(0, -10)); // scroll-margin puts the heading 16px under the bar; nudge a little above that
   await hp.locator("#menu-btn").click();
   const cur = await hp.evaluate(() => [...document.querySelectorAll('#menu-panel [aria-current="location"]')].map((b) => b.textContent));
   check("menu: highlights the section you are reading", JSON.stringify(cur) === JSON.stringify(["Subjects"]), JSON.stringify(cur));
@@ -510,20 +510,21 @@ try {
   await pp.screenshot({ path: path.join(here, "screenshot-phone-lsat.png"), fullPage: true });
   check("no console errors (phone)", perr.length === 0, perr.join(" | "));
 
-  // ---- Sections menu on a 390px phone, with reduced motion ----
+  // ---- Menu on a 390px phone, with reduced motion ----
   const mphone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
   await localOnly(mphone);
   const mp = await mphone.newPage();
   const mperr = watch(mp);
   const fit = () => mp.evaluate(() => {
     const r = (s) => document.querySelector(s).getBoundingClientRect();
-    const m = r("#menu-btn"), w = r(".wordmark"), s = r("#nav-slot"), t = r("#theme-toggle");
-    return { a: w.left - m.right, b: s.left - w.right, c: t.left - s.right, right: t.right, h: Math.max(m.height, s.height), slot: document.getElementById("nav-slot").textContent };
+    const slot = document.getElementById("nav-slot"), m = r("#menu-btn"), w = r(".wordmark"), t = r("#theme-toggle");
+    const s = slot.hidden ? null : slot.getBoundingClientRect();
+    return { a: w.left - m.right, b: (s ? s.left : t.left) - w.right, c: s ? t.left - s.right : 99, right: t.right, h: Math.max(m.height, s ? s.height : 0, t.height), slot: slot.hidden ? "" : slot.textContent };
   });
   await mp.goto(BASE);
   await mp.locator(".subject").first().waitFor();
   const pf = await fit();
-  check("390px: Sections, wordmark, Subjects and theme toggle fit on one line", pf.a >= 6 && pf.b >= 6 && pf.c >= 0 && pf.right <= 375 && pf.h < 40, JSON.stringify(pf));
+  check("390px: Menu, wordmark and theme toggle fit on one line (no separate Subjects jump)", pf.slot === "" && pf.a >= 6 && pf.b >= 6 && pf.c >= 0 && pf.right <= 375 && pf.h < 40, JSON.stringify(pf));
   await mp.locator("#menu-btn").tap();
   const sheet = await mp.evaluate(() => { const p = document.getElementById("menu-panel"), r = p.getBoundingClientRect(); return { left: r.left, width: r.width, top: r.top, bottom: r.bottom, scrolls: p.scrollHeight > p.clientHeight, oy: getComputedStyle(p).overflowY, exp: document.getElementById("menu-btn").getAttribute("aria-expanded") }; });
   check("390px: tapping opens a full-width sheet under the bar that scrolls", sheet.exp === "true" && sheet.left === 0 && sheet.width === 390 && sheet.top >= 51 && sheet.bottom <= 844 && sheet.oy === "auto", JSON.stringify(sheet));
@@ -533,7 +534,7 @@ try {
   await mp.goto(BASE + "#math");
   await mp.locator(".question").waitFor();
   const pr = await fit();
-  check("390px round: Sections, wordmark, 'End round' and toggle still fit", pr.slot === "End round" && pr.a >= 6 && pr.b >= 6 && pr.right <= 375 && pr.h < 40, JSON.stringify(pr));
+  check("390px round: Menu, wordmark, 'End round' and toggle still fit", pr.slot === "End round" && pr.a >= 6 && pr.b >= 6 && pr.right <= 375 && pr.h < 40, JSON.stringify(pr));
   check("no console errors (menu phone)", mperr.length === 0, mperr.join(" | "));
   await mphone.close();
 
@@ -780,7 +781,7 @@ try {
   check("phone: match columns stack into one on narrow screens", await (async () => { await startIds(fp, "sci", [phoneIds[3]]); return fp.evaluate(() => { const c = document.querySelectorAll(".match-col"); return c[1].getBoundingClientRect().top > c[0].getBoundingClientRect().bottom - 1; }); })());
   check("no console errors (phone formats)", ferr.length === 0, ferr.join(" | "));
 
-  // ---- Sections menu: smooth Apple-style hover (red pill fades/grows in, label eases up in size) ----
+  // ---- Menu: smooth Apple-style hover (red pill fades/grows in, label eases up in size) ----
   const menuCtx = async (opts) => {
     const c = await browser.newContext(opts);
     await localOnly(c);
@@ -877,6 +878,104 @@ try {
     check("menu smooth phone: no layout shift, no sideways scroll on the page or in the menu, no errors", (await boxes(pg)) === before && ov <= 0 && (await panelOverflow(pg)) <= 0 && errs.length === 0, JSON.stringify({ ov, errs }));
     await c.close();
   }
+
+  // ---- polish batch ----
+  const fsMod = await import("node:fs");
+  const { TOTAL_QUESTIONS } = await import("../js/engine.js");
+  for (const [w, h, mob] of [[1440, 900, false], [390, 844, true]]) {
+    const tag = w + "px";
+    const pc = await browser.newContext({ viewport: { width: w, height: h }, isMobile: mob, hasTouch: mob });
+    await localOnly(pc);
+    const pg = await pc.newPage();
+    const perrs = watch(pg);
+    pg.on("dialog", (d) => d.accept());
+    await pg.goto(BASE); await pg.locator(".subject").first().waitFor();
+    // 1. first visit: no grey "Nothing due", just Mixed review
+    const hero = await pg.evaluate(() => ({ btns: [...document.querySelectorAll(".hero .btn")].map((b) => b.textContent.trim() + (b.classList.contains("primary") ? "*" : "")), nothing: /Nothing due/.test(document.querySelector(".hero").innerText) }));
+    check(`${tag} #1: first visit shows only a primary 'Mixed review' (no 'Nothing due')`, !hero.nothing && JSON.stringify(hero.btns) === JSON.stringify(["Mixed review*"]), JSON.stringify(hero));
+    // 7. unlock hints hidden on unused tiles and on an unused LSAT card
+    check(`${tag} #7: no unlock hints on subjects or LSAT before they're started`, (await pg.locator(".subject .hint").count()) === 0 && (await pg.locator(".lsat-hint").count()) === 0 && !/to unlock|more answers toward/i.test(await pg.evaluate(() => [...document.querySelectorAll(".subject, .lsat-card")].map((e) => e.innerText).join(" "))));
+    // 5. top bar: 'Menu' trigger, no Subjects jump
+    const bar = await pg.evaluate(() => ({ menu: document.getElementById("menu-btn").textContent.trim(), name: document.getElementById("menu-btn").getAttribute("aria-label"), slotHidden: document.getElementById("nav-slot").hidden, slotShown: getComputedStyle(document.getElementById("nav-slot")).display, subjectsInBar: [...document.querySelectorAll("#nav button")].some((b) => b.offsetParent && /Subjects/.test(b.textContent)) }));
+    check(`${tag} #5: menu trigger reads 'Menu' (its accessible name) and there's no Subjects button in the bar`, bar.menu === "Menu" && bar.name === null && bar.slotHidden && bar.slotShown === "none" && !bar.subjectsInBar, JSON.stringify(bar));
+    // 6. 44px targets for every visible top-bar control, without a heavier look
+    const targets = async () => pg.evaluate(() => [...document.querySelectorAll("#nav button")].filter((b) => b.offsetParent).map((b) => {
+      const r = b.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const hits = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === b || b.contains(e)); };
+      return { id: b.id || b.className, h: Math.round(r.height), ok: hits(cx, cy - 21.5) && hits(cx, cy + 21.5) && hits(cx - 21.5, cy) && hits(cx + 21.5, cy) };
+    }));
+    const t0 = await targets();
+    check(`${tag} #6: every top-bar control has a 44x44 touch target while its visible pill stays under 40px`, t0.length >= 3 && t0.every((t) => t.ok && t.h < 40), JSON.stringify(t0));
+    // 2. jump targets land below the sticky bar (Menu entries and plain scrollIntoView)
+    const navH = await pg.evaluate(() => document.getElementById("nav").getBoundingClientRect().height);
+    const sm = await pg.evaluate(() => parseFloat(getComputedStyle(document.getElementById("subjects")).scrollMarginTop));
+    check(`${tag} #2: jump targets have scroll-margin-top = real bar height + 16px`, Math.abs(sm - (navH + 16)) < 1, JSON.stringify({ sm, navH }));
+    for (const label of ["Subjects", "LSAT prep", "How it works", "Backup and reset"]) {
+      await pg.evaluate(() => window.scrollTo(0, 0));
+      await (mob ? pg.locator("#menu-btn").tap() : pg.locator("#menu-btn").click());
+      await pg.locator("#menu-panel .menu-item.top", { hasText: label }).click();
+      await pg.waitForTimeout(1100);
+      const pos = await pg.evaluate((label) => {
+        const nb = document.getElementById("nav").getBoundingClientRect().bottom;
+        const h2 = [...document.querySelectorAll("#app h2")].find((x) => x.textContent.trim() === label || x.closest(".lsat-card") && label === "LSAT prep");
+        const sec = h2.closest("#app > *"), end = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+        return { secTop: Math.round(sec.getBoundingClientRect().top - nb), h2Top: Math.round(h2.getBoundingClientRect().top - nb), end };
+      }, label);
+      check(`${tag} #2: Menu > ${label} shows its heading just below the bar`, pos.secTop >= 8 && (pos.h2Top < 120 || pos.end), JSON.stringify(pos));
+    }
+    for (const id of ["subjects", "sec-lsat-prep", "howto"]) {
+      const g = await pg.evaluate((id) => { const el = document.getElementById(id); el.scrollIntoView({ block: "start" }); const h = el.querySelector("h2"); return Math.round(h.getBoundingClientRect().top - document.getElementById("nav").getBoundingClientRect().bottom); }, id);
+      check(`${tag} #2: scrollIntoView(#${id}) keeps its heading visible below the bar`, g >= 8, "gap=" + g);
+    }
+    // 8. tab title during rounds
+    const titles = [];
+    titles.push(await pg.title());
+    await pg.evaluate(() => window.scrollTo(0, 0));
+    await pg.locator('[data-arg="subject:math"]').click(); await pg.locator("#q-stem").waitFor();
+    titles.push(await pg.title());
+    // 5 + 6 during a round: End round in the bar, 44px, and it still ends the round
+    const slot = await pg.evaluate(() => { const s = document.getElementById("nav-slot"); return { shown: !s.hidden && !!s.offsetParent, text: s.textContent }; });
+    const t1 = await targets();
+    check(`${tag} #5/#6: during a round the bar shows 'End round' with a 44px target`, slot.shown && slot.text === "End round" && t1.find((t) => t.id === "nav-slot")?.ok, JSON.stringify([slot, t1]));
+    await answerCurrent(pg, true);
+    await pg.locator("#nav-slot").click();
+    await pg.locator("text=Round complete").waitFor();
+    titles.push(await pg.title());
+    check(`${tag} #5: 'End round' in the bar still ends the round (summary shown) and then hides`, (await pg.evaluate(() => document.getElementById("nav-slot").hidden)));
+    await pg.locator('[data-action="home"]').click(); await pg.locator(".subject").first().waitFor();
+    titles.push(await pg.title());
+    // 7 after starting math: hint on Math only
+    const hints = await pg.evaluate(() => [...document.querySelectorAll(".subject")].filter((t) => t.querySelector(".hint")).map((t) => t.dataset.s));
+    check(`${tag} #7: after a Math round only the Math tile shows its unlock hint`, JSON.stringify(hints) === JSON.stringify(["math"]), JSON.stringify(hints));
+    await pg.locator('[data-arg="mixed:all"]').click(); await pg.locator("#q-stem").waitFor();
+    titles.push(await pg.title());
+    await pg.goBack(); await pg.locator(".subject").first().waitFor();
+    titles.push(await pg.title());
+    await pg.locator('[data-arg="lsat-short:lsat"]').click(); await pg.locator("#q-stem").waitFor();
+    titles.push(await pg.title());
+    await pg.goBack(); await pg.locator(".subject").first().waitFor();
+    titles.push(await pg.title());
+    check(`${tag} #8: tab title follows rounds (Math, Mixed review, LSAT) and returns to 'Study Lab' at home`, JSON.stringify(titles) === JSON.stringify(["Study Lab", "Math practice — Study Lab", "Math practice — Study Lab", "Study Lab", "Mixed review — Study Lab", "Study Lab", "LSAT practice — Study Lab", "Study Lab"]), JSON.stringify(titles));
+    // 1 with something due: Review due appears
+    await pg.evaluate(() => { const s = JSON.parse(localStorage.getItem("study-lab-progress-v1")); for (const c of Object.values(s.cards)) c.due = 1; localStorage.setItem("study-lab-progress-v1", JSON.stringify(s)); });
+    await pg.reload(); await pg.locator(".subject").first().waitFor();
+    const hero2 = await pg.evaluate(() => [...document.querySelectorAll(".hero .btn")].map((b) => b.textContent.trim()));
+    check(`${tag} #1: once something is due, 'Review due (n)' appears beside Mixed review`, hero2.length === 2 && /^Review due \(\d+\)$/.test(hero2[0]) && hero2[1] === "Mixed review", JSON.stringify(hero2));
+    const ov = await pg.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    check(`${tag}: no sideways scroll, no console errors (polish)`, ov <= 0 && perrs.length === 0, JSON.stringify({ ov, perrs }));
+    await pc.close();
+  }
+  // 3. share preview count + 4. no leftover links to the old study-lab- address
+  const html = fsMod.readFileSync(path.join(here, "..", "index.html"), "utf8");
+  const metaC = (re) => (html.match(re) || [])[1] || "";
+  const ogDesc = metaC(/property="og:description" content="([^"]*)"/), twDesc = metaC(/name="twitter:description" content="([^"]*)"/), ogImg = metaC(/property="og:image" content="([^"]*)"/);
+  check(`#3: og/twitter descriptions say ${TOTAL_QUESTIONS} questions (the bank's real count) and no stale 356`, ogDesc.startsWith(TOTAL_QUESTIONS + " ") && twDesc.startsWith(TOTAL_QUESTIONS + " ") && !/\b356\b/.test(html), JSON.stringify([ogDesc.slice(0, 40), twDesc.slice(0, 40)]));
+  check("#3: og:image URL is versioned so previews refresh", /og\.png\?v=\d+$/.test(ogImg), ogImg);
+  const png = fsMod.readFileSync(path.join(here, "..", "og.png"));
+  check("#3: og.png is 1200x630 and the generator takes its count from the banks", png.readUInt32BE(16) === 1200 && png.readUInt32BE(20) === 630 && /TOTAL_QUESTIONS\} questions/.test(fsMod.readFileSync(path.join(here, "make-og.mjs"), "utf8")));
+  const scan = ["index.html", "README.md", "lsat-research.md", "js/app.js", "js/sync.js", "js/menu.js", "supabase/schema.sql", ".github/workflows/pages.yml"].filter((f) => fsMod.existsSync(path.join(here, "..", f)));
+  const stale = scan.filter((f) => /study-lab-\/|github\.io\/study-lab-|github\.com\/liamsmith059\/study-lab-/.test(fsMod.readFileSync(path.join(here, "..", f), "utf8")));
+  check("#4: no links to the old /study-lab-/ address anywhere in the site or docs", stale.length === 0, stale.join(","));
 } catch (e) {
   failures++;
   console.log("FAIL exception: " + e.message);

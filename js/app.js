@@ -7,7 +7,7 @@ import {
 import { createSync, syncConfigured, authInUrl } from "./sync.js";
 import { initMenu, tagSections, scrollToSection } from "./menu.js";
 
-let menu = null; // the top bar's Sections menu, set up once the first view is ready
+let menu = null; // the top bar's Menu (the Sections dropdown), set up once the first view is ready
 
 // ---------- storage ----------
 let storageOk = true;
@@ -148,7 +148,7 @@ function showHome() {
   state.view = "home";
   sync.flush();
   render(true, "h1");
-  // Arrived here from the Sections menu during a round or summary: continue to the chosen section.
+  // Arrived here from the Menu during a round or summary: continue to the chosen section.
   // Wait a frame: after Back, the browser restores the home page's old scroll position first.
   if (state.pendingSection) { const id = state.pendingSection; state.pendingSection = null; requestAnimationFrame(() => setTimeout(() => scrollToSection(id), 0)); }
 }
@@ -761,7 +761,7 @@ function homeView() {
       <p>${esc(s.blurb)}.</p>
       ${ss.seen ? bar(ss.mastery) : ""}
       <span class="meta">Level ${levelOf(st, s.key)} of 3 · ${ss.seen}/${ss.total} seen · ${ss.mastered} mastered</span>
-      <span class="meta hint">${esc(levelHint(st, s.key))}</span>
+      ${ss.seen ? `<span class="meta hint">${esc(levelHint(st, s.key))}</span>` : ""}
     </article>`;
   }).join("");
   const bars = SUBJECTS.map((s) => ({ s, ss: subjectStats(st, s.key, now) }))
@@ -785,7 +785,7 @@ function homeView() {
     <h1 tabindex="-1">Study Lab</h1>
     <p class="lede"><span class="tagline-long">Six school subjects plus LSAT prep, ${TOTAL_QUESTIONS} questions, with spaced repetition and difficulty that climbs as you improve.</span><span class="tagline-short">${TOTAL_QUESTIONS} questions that get harder as you do.</span></p>
     <div class="actions">
-      ${btn(dueAll ? "Review due (" + Math.min(dueAll, SIZE) + ")" : "Nothing due", "start", { arg: "due:all", primary: dueAll > 0, disabled: !dueAll })}
+      ${dueAll ? btn("Review due (" + Math.min(dueAll, SIZE) + ")", "start", { arg: "due:all", primary: true }) : ""}
       ${btn("Mixed review", "start", { arg: "mixed:all", primary: !dueAll })}
     </div>
   </section>
@@ -834,7 +834,7 @@ function lsatCard(st, now) {
     <h2 id="lsat-title">Original practice in the style of the current test.</h2>
     <p class="lead">${lr} Logical Reasoning arguments and ${sets} Reading Comprehension passage sets (${rc} questions) across law, science, humanities and social science, five choices, A to E. Short rounds also mix in ${x} skill drills: conditional logic you type out, flaws you explain, chains you order and terms you match.</p>
     ${ss.seen ? bar(ss.mastery) : ""}
-    <p class="small muted">${esc(levelHint(st, "lsat"))}</p>
+    ${ss.seen ? `<p class="small muted lsat-hint">${esc(levelHint(st, "lsat"))}</p>` : ""}
     <div class="actions start">
       ${ss.due ? btn("Review due (" + Math.min(ss.due, SIZE) + ")", "start", { arg: "lsat-due:lsat", primary: true }) : ""}
       ${btn("Short round · 10", "start", { arg: "lsat-short:lsat", primary: !ss.due })}
@@ -875,15 +875,23 @@ function render(scrollTop = false, focus) {
   if (menu) menu.refresh();
 }
 
-// The top bar lives outside #app: "Subjects" on the home page, "End round" during a round.
+// The top bar lives outside #app. Its only extra control is "End round", shown during a round (Subjects and
+// the other home sections are in the Menu). Also keeps the tab title in step: "Math practice — Study Lab".
 const navSlot = document.getElementById("nav-slot");
+const BASE_TITLE = document.title || "Study Lab";
 function updateNav() {
-  if (!navSlot) return;
-  const mode = state.view === "quiz" ? "end" : state.view === "summary" ? "back" : "subjects";
-  navSlot.dataset.nav = mode;
-  navSlot.textContent = mode === "end" ? "End round" : "Subjects";
+  if (navSlot) {
+    const inRound = state.view === "quiz";
+    navSlot.hidden = !inRound;
+    navSlot.dataset.nav = "end";
+    navSlot.textContent = "End round";
+  }
+  const s = state.sess;
+  const roundTitle = (state.view === "quiz" || state.view === "summary") && s ? (s.mode.startsWith("lsat-") ? "LSAT practice" : s.title) : "";
+  const want = roundTitle ? roundTitle + " — " + BASE_TITLE : BASE_TITLE;
+  if (document.title !== want) document.title = want;
 }
-// Sections menu (js/menu.js; `menu` is declared near the top). It always lists the home page's sections: on the home page it reads the
+// Menu dropdown (js/menu.js; `menu` is declared near the top). It always lists the home page's sections: on the home page it reads the
 // live page; during a round or summary it reads a freshly built copy of the home page, and choosing an
 // entry goes home first (asking before leaving a round in progress), then scrolls to that section.
 function homeOutline() {
@@ -904,11 +912,7 @@ if (nav) nav.addEventListener("click", (e) => {
   const el = e.target.closest("[data-nav]");
   if (!el) return;
   const what = el.dataset.nav;
-  if (what === "subjects") {
-    const target = document.getElementById("subjects");
-    if (target) { target.scrollIntoView({ behavior: "smooth", block: "start" }); const b = target.querySelector(".tile-link"); if (b) b.focus({ preventScroll: true }); }
-  } else if (what === "end") actions.end();
-  else if (what === "back") goHome();
+  if (what === "end") actions.end();
   else if (what === "home") {
     if (state.view === "home") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     if (inProgress() && !window.confirm(LEAVE_MSG)) return;

@@ -36,8 +36,8 @@ index.html          page shell (all paths are relative, so it works under /<repo
 config.js           Supabase URL + anon key (blank = local-only, sign-in hidden)
 css/styles.css      styles (light + dark mode, phone and laptop); colour tokens at the top
 js/theme.js         applies the saved theme before first paint and runs the toggle
-js/menu.js          the Sections dropdown in the top bar, built from the page's h2/h3 headings (on hover, keyboard focus or a finger sliding across, an entry smoothly grows slightly with red text on a soft red pill; colour only with reduced motion)
-og.png              1200x630 share image (regenerate with tests/make-og.mjs)
+js/menu.js          the Menu dropdown in the top bar (lists the page's sections), built from the page's h2/h3 headings (on hover, keyboard focus or a finger sliding across, an entry smoothly grows slightly with red text on a soft red pill; colour only with reduced motion)
+og.png              1200x630 share image (regenerate with tests/make-og.mjs; the question count comes from the banks. Then update the count in index.html's og/twitter descriptions and bump ?v= on og:image so link previews refresh)
 js/questions.js     the question bank (multiple choice)
 js/practice.js      Recall / Explain why / Put in order / Match questions and the short reading passages, per subject
 js/lsat.js          the LSAT bank (Logical Reasoning items, Reading Comprehension passages, skill drills)

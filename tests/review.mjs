@@ -93,10 +93,10 @@ const PAIRS = [
   ["--muted", "--bg", "secondary text on the page"], ["--muted", "--card", "secondary text on cards"], ["--muted", "--card-2", "secondary text on goal box"],
   ["--muted-on-fill", "--fill", "unselected segmented control / pace pill"], ["--text", "--fill", "grey button text"],
   ["--ok", "--ok-soft", "green tag on a correct-answer tint"], ["--ok", "--card", "green feedback heading"],
-  ["--text", "--card", "Sections menu: section entry"], ["--muted", "--card", "Sections menu: sub-heading entry and note"],
-  ["--red-text", "--card", "Sections menu: current section"],
-  ["--red-text", "--bg", "Sections button while open (on the top bar)"],
-  ["--red-text", "--tint-soft", "Sections menu: hovered / focused entry (red on red tint)"],
+  ["--text", "--card", "Menu: section entry"], ["--muted", "--card", "Menu: sub-heading entry and note"],
+  ["--red-text", "--card", "Menu: current section"],
+  ["--red-text", "--bg", "Menu button while open (on the top bar)"],
+  ["--red-text", "--tint-soft", "Menu: hovered / focused entry (red on red tint)"],
   ["--text", "--card-2", "Explain why: 'You wrote' box"], ["--muted-on-fill", "--card", "Explain why: 1/2/3 key hints on grade buttons"],
   ["--text", "--ok-soft", "Order/Match: text on a correct row"], ["--text", "--tint-soft", "Order/Match: text on a wrong row or selected term"],
   ["--muted", "--tint-soft", "Match: crossed-out wrong meaning"], ["--muted", "--ok-soft", "Order: position number on a correct row"],
@@ -173,7 +173,7 @@ for (const theme of ["light", "dark"]) {
   await shot(p, `lsat-phone-${theme}-expanded-scrolled.png`);
   await p.context().close();
 }
-// ---- Sections menu: open on desktop (both themes) and phone, and the page after choosing an entry ----
+// ---- Menu: open on desktop (both themes) and phone, and the page after choosing an entry ----
 const menuOut = path.join(out, "menu");
 fs.mkdirSync(menuOut, { recursive: true });
 const menuShot = (p, name) => p.screenshot({ path: path.join(menuOut, name) });
@@ -268,7 +268,7 @@ for (const [vp, theme, mobile] of [[{ width: 1440, height: 900 }, "light", false
   await qshot("10-reading-passage"); await over("Reading");
   await p.context().close();
 }
-// ---- Sections menu: smooth hover (red pill + label grown to 1.04), desktop light + dark and phone dark, 2x ----
+// ---- Menu: smooth hover (red pill + label grown to 1.04), desktop light + dark and phone dark, 2x ----
 const msOut = path.join(out, "menu-smooth");
 fs.mkdirSync(msOut, { recursive: true });
 for (const [theme, phone] of [["light", false], ["dark", false], ["dark", true]]) {

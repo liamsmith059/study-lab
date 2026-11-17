@@ -1,4 +1,4 @@
-// "Sections" menu in the top bar: a dropdown listing the page's headings, built from the DOM.
+// The top bar's "Menu" button: a dropdown listing the page's headings (its sections), built from the DOM.
 // Top-level entries are the home page's sections (each a direct child of #app with an h2); entries
 // indented under them are that section's h3 sub-headings. Opens on hover (with a short close delay)
 // on mouse devices, and on click / tap / Enter / ArrowDown everywhere.
