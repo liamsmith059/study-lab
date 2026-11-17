@@ -7,6 +7,70 @@ import * as E from "../js/engine.js";
 let failures = 0;
 const t = (name, fn) => { try { fn(); console.log("ok   " + name); } catch (e) { failures++; console.log("FAIL " + name + "\n     " + e.message); } };
 
+// ---- before the LSAT bank is loaded (the site now loads js/lsat.js on demand) ----
+// A store in the exact format the live site saves to localStorage ("study-lab-progress-v1").
+const LIVE_STORE = {
+  cards: {
+    math0: { b: 3, due: 9e12, n: 2, k: 2, t: 1700000000000 },
+    hist4: { b: 1, due: 5, n: 3, k: 1, t: 1700000001000 },
+    lsat3: { b: 2, due: 4, n: 1, k: 1, t: 1700000002000 },
+    lsat27: { b: 5, due: 9e12, n: 4, k: 4, t: 1700000003000 },
+    lsat49: { b: 1, due: 6, n: 1, k: 0, t: 1700000004000 },
+  },
+  recent: { math: [1, 1], hist: [0, 1, 0], lsat: [1, 1, 1, 1, 0] },
+  days: ["2026-11-14", "2026-11-15"], total: 11, right: 8, updatedAt: 1700000004000,
+};
+t("lazy LSAT: bank not loaded at import, core works", () => {
+  assert.equal(E.lsatLoaded(), false);
+  assert.equal(E.QUESTIONS.length, 306);
+  assert.equal(E.TOTAL_QUESTIONS, 356);
+});
+t("saved progress (live-site format) loads unchanged before the LSAT bank loads", () => {
+  const n = E.normalize(JSON.parse(JSON.stringify(LIVE_STORE)));
+  assert.deepEqual(n, LIVE_STORE);
+  assert.deepEqual(E.decodeBackup(E.encodeBackup(LIVE_STORE)), LIVE_STORE);
+  const lsat = E.subjectStats(n, "lsat", 1000);
+  assert.equal(lsat.total, 50); assert.equal(lsat.seen, 3); assert.equal(lsat.mastered, 1); assert.equal(lsat.due, 2);
+  assert.deepEqual(E.dueCounts(n, 1000), { core: 1, lsat: 2 });
+  const other = E.applyAnswer(E.emptyStore(), E.QMAP.geo0, true, "sure", 1700000005000);
+  const m = E.mergeStores(n, other);
+  for (const id of Object.keys(LIVE_STORE.cards)) assert.deepEqual(m.cards[id], LIVE_STORE.cards[id], id + " kept by merge");
+  assert.ok(m.cards.geo0);
+  const after = E.applyAnswer(n, E.QMAP.math1, false, "sure", 1700000006000);
+  assert.deepEqual(Object.keys(after).sort(), Object.keys(LIVE_STORE).sort(), "same top-level shape");
+  assert.deepEqual(after.cards.lsat27, LIVE_STORE.cards.lsat27, "answering a core question leaves LSAT cards alone");
+  assert.ok(!E.normalize({ ...LIVE_STORE, cards: { lsat50: { b: 1, due: 1, n: 1, k: 1, t: 1 } } }).cards.lsat50, "unknown ids still dropped");
+});
+t("weakest topic and due counts", () => {
+  let st = E.emptyStore();
+  const alg = E.QUESTIONS.filter((q) => q.s === "math" && q.t === "Algebra");
+  for (const q of alg.slice(0, 3)) st = E.applyAnswer(st, q, false, "sure", 1000);
+  const bio = E.QUESTIONS.filter((q) => q.s === "sci" && q.t === "Biology");
+  for (const q of bio.slice(0, 3)) st = E.applyAnswer(st, q, true, "sure", 1000);
+  st = E.applyAnswer(st, bio[3], false, "sure", 1000);
+  const w = E.weakestTopic(st);
+  assert.equal(w.t, "Algebra"); assert.equal(w.s, "math"); assert.equal(w.n, 3); assert.equal(w.k, 0);
+  assert.equal(E.weakestTopic(E.emptyStore()), null);
+  assert.deepEqual(E.dueCounts(st, 1000 + 11 * E.MIN), { core: 4, lsat: 0 });
+});
+
+await E.loadLsat();
+await E.loadLsat(); // a second call must not register the bank twice
+
+t("LSAT bank loads on demand, once, and matches LSAT_META", () => {
+  assert.equal(E.lsatLoaded(), true);
+  assert.equal(E.QUESTIONS.length, 356, "no double registration");
+  assert.equal(LSAT_ITEMS.length, E.LSAT_META.total);
+  assert.equal(LSAT_ITEMS.filter((r) => !r.p).length, E.LSAT_META.lr);
+  assert.equal(LSAT_ITEMS.filter((r) => r.p).length, E.LSAT_META.rc);
+  assert.equal(Object.keys(LSAT_PASSAGES).length, E.LSAT_META.sets);
+  assert.equal(E.TOTAL_QUESTIONS, E.QUESTIONS.length);
+});
+t("saved progress is identical whether or not the LSAT bank was loaded", () => {
+  assert.deepEqual(E.normalize(JSON.parse(JSON.stringify(LIVE_STORE))), LIVE_STORE);
+  assert.equal(E.subjectStats(LIVE_STORE, "lsat", 1000).seen, 3);
+  assert.deepEqual(E.dueCounts(LIVE_STORE, 1000), { core: 1, lsat: 2 });
+});
 t("306 core questions, 51 per core subject, plus the LSAT bank", () => {
   assert.equal(E.CORE_KEYS.length, 6);
   for (const k of E.CORE_KEYS) assert.equal(RAW[k].length, 51, k);

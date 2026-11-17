@@ -1,7 +1,8 @@
 // Pure study logic: storage shape, spaced repetition, adaptive levels, session building, merging.
 // No DOM access here, so it can be tested in Node.
 import { RAW } from "./questions.js";
-import { LSAT_ITEMS, LSAT_PASSAGES } from "./lsat.js";
+// The LSAT bank (js/lsat.js, ~80 KB) is loaded on demand with loadLsat(), so the home page and the
+// core subjects don't pay for it. Until it loads, LSAT progress is still kept, counted and merged by id.
 
 export const SUBJECTS = [
   { key: "math", name: "Math", blurb: "Arithmetic, algebra, geometry, probability, functions" },
@@ -16,7 +17,11 @@ export const SUBJECT_KEYS = SUBJECTS.map((s) => s.key);
 // Core school subjects: what "Mixed review" and the Today panel cover. LSAT has its own rounds.
 export const CORE_KEYS = SUBJECTS.filter((s) => !s.special).map((s) => s.key);
 export const LETTERS = ["A", "B", "C", "D", "E"];
-export const PASSAGES = LSAT_PASSAGES;
+export const PASSAGES = {};
+// Size of the LSAT bank, known without loading it (checked against js/lsat.js by the tests).
+// IDs are "lsat0".."lsat49"; new items are only ever appended.
+export const LSAT_META = { total: 50, lr: 29, rc: 21, sets: 4 };
+const LSAT_ID = /^lsat(\d+)$/;
 
 export const QUESTIONS = [];
 for (const s of Object.keys(RAW)) {
@@ -24,16 +29,48 @@ for (const s of Object.keys(RAW)) {
     QUESTIONS.push({ id: s + i, s, d: r[0], t: r[1], q: r[2], c: r[3], e: r[4] });
   });
 }
-// LSAT items: c is correct-first like the core bank; `fixed` is the A-E display order (correct in slot `a`).
-LSAT_ITEMS.forEach((r, i) => {
-  const fixed = r.c.slice(1);
-  fixed.splice(LETTERS.indexOf(r.a), 0, r.c[0]);
-  QUESTIONS.push({
-    id: "lsat" + i, s: "lsat", d: r.d, t: r.t, q: r.q, c: r.c.slice(), e: r.e,
-    fixed, len: r.len, stim: r.stim || "", p: r.p || "", trap: r.c[r.trap], te: r.te,
-  });
-});
 export const QMAP = Object.fromEntries(QUESTIONS.map((q) => [q.id, q]));
+export const CORE_COUNT = QUESTIONS.length;
+export const TOTAL_QUESTIONS = CORE_COUNT + LSAT_META.total;
+export const PASSAGE_KEYS = [];
+let lsatState = null;
+export const lsatLoaded = () => QUESTIONS.length > CORE_COUNT;
+
+// LSAT items: c is correct-first like the core bank; `fixed` is the A-E display order (correct in slot `a`).
+export function registerLsat(items, passages) {
+  if (lsatLoaded()) return;
+  Object.assign(PASSAGES, passages);
+  items.forEach((r, i) => {
+    const fixed = r.c.slice(1);
+    fixed.splice(LETTERS.indexOf(r.a), 0, r.c[0]);
+    const q = {
+      id: "lsat" + i, s: "lsat", d: r.d, t: r.t, q: r.q, c: r.c.slice(), e: r.e,
+      fixed, len: r.len, stim: r.stim || "", p: r.p || "", trap: r.c[r.trap], te: r.te,
+    };
+    QUESTIONS.push(q);
+    QMAP[q.id] = q;
+    if (q.p && !PASSAGE_KEYS.includes(q.p)) PASSAGE_KEYS.push(q.p);
+  });
+}
+export function loadLsat() {
+  if (!lsatState) {
+    lsatState = import("./lsat.js").then((m) => registerLsat(m.LSAT_ITEMS, m.LSAT_PASSAGES))
+      .catch((err) => { lsatState = null; throw err; });
+  }
+  return lsatState;
+}
+
+// A saved card id we recognise: a loaded question, or an LSAT id (even before the LSAT bank loads).
+export function knownId(id) {
+  if (QMAP[id]) return true;
+  const m = LSAT_ID.exec(id);
+  return !!m && !lsatLoaded() && Number(m[1]) < LSAT_META.total;
+}
+// Question ids for one subject, without needing the LSAT bank loaded.
+export function idsOf(s) {
+  if (s === "lsat" && !lsatLoaded()) return Array.from({ length: LSAT_META.total }, (_, i) => "lsat" + i);
+  return QUESTIONS.filter((q) => q.s === s).map((q) => q.id);
+}
 
 // Display order for a question's choices: fixed A-E for LSAT, shuffled for everything else.
 export function choiceOrder(q) {
@@ -64,7 +101,7 @@ export function normalize(x) {
   if (!validStore(x)) return emptyStore();
   const cards = {};
   for (const [id, c] of Object.entries(x.cards)) {
-    if (!QMAP[id] || !c || typeof c.b !== "number") continue;
+    if (!knownId(id) || !c || typeof c.b !== "number") continue;
     cards[id] = { b: c.b, due: c.due || 0, n: c.n || 0, k: c.k || 0, t: c.t || Math.max(0, (c.due || 0) - (INTERVALS[c.b] || 0)) };
   }
   const recent = {};
@@ -205,7 +242,6 @@ export function buildSession(st, keys, mode, now = Date.now(), filter = null) {
 
 // ---------- LSAT rounds ----------
 export const isLR = (q) => q.s === "lsat" && !q.p;
-export const PASSAGE_KEYS = Array.from(new Set(QUESTIONS.filter((q) => q.p).map((q) => q.p)));
 export function passageIds(key) {
   return QUESTIONS.filter((q) => q.p === key).map((q) => q.id);
 }
@@ -276,10 +312,10 @@ export function applyAnswer(st, q, correct, conf, now = Date.now()) {
 }
 
 export function subjectStats(st, s, now = Date.now()) {
-  const qs = QUESTIONS.filter((q) => q.s === s);
+  const qs = idsOf(s);
   let seen = 0, mastered = 0, due = 0, score = 0;
-  for (const q of qs) {
-    const c = st.cards[q.id];
+  for (const id of qs) {
+    const c = st.cards[id];
     if (!c) continue;
     seen++;
     if (c.b >= 4) mastered++;
@@ -305,4 +341,31 @@ export function decodeBackup(code) {
   const parsed = JSON.parse(json);
   if (!validStore(parsed)) throw new Error("Not a Study Lab backup");
   return normalize(parsed);
+}
+
+// Due counts used everywhere a "Due now" number is shown: core subjects (what Due review and Mixed cover)
+// and LSAT separately (it has its own review round). Works before the LSAT bank loads.
+export function dueCounts(st, now = Date.now()) {
+  let core = 0, lsat = 0;
+  for (const [id, c] of Object.entries(st.cards)) {
+    if (c.due > now) continue;
+    if (id.startsWith("lsat")) lsat++; else core++;
+  }
+  return { core, lsat };
+}
+
+// The core topic with the lowest accuracy over every answer recorded for it (at least `min` answers).
+export function weakestTopic(st, min = 3) {
+  const by = {};
+  for (const [id, c] of Object.entries(st.cards)) {
+    const q = QMAP[id];
+    if (!q || q.s === "lsat" || !c.n) continue;
+    const key = q.s + "|" + q.t;
+    const g = by[key] || (by[key] = { s: q.s, t: q.t, n: 0, k: 0 });
+    g.n += c.n; g.k += Math.min(c.k, c.n);
+  }
+  const list = Object.values(by).filter((g) => g.n >= min && g.k < g.n)
+    .map((g) => ({ ...g, acc: g.k / g.n }))
+    .sort((a, b) => a.acc - b.acc || b.n - a.n);
+  return list[0] || null;
 }
