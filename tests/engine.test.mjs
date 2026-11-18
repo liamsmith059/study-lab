@@ -1,16 +1,22 @@
 // Node unit checks for the question bank and study logic: node tests/engine.test.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { RAW } from "../js/questions.js";
 import { LSAT_ITEMS, LSAT_PASSAGES } from "../js/lsat.js";
 import { EXTRA, EXTRA_PASSAGES } from "../js/practice.js";
+import { STUDY_LESSONS } from "../js/study.js";
+import { LESSON_TEXT } from "../js/lessons.js";
 import * as E from "../js/engine.js";
 
 let failures = 0;
 const t = (name, fn) => { try { fn(); console.log("ok   " + name); } catch (e) { failures++; console.log("FAIL " + name + "\n     " + e.message); } };
 
-// 306 original multiple-choice questions plus the practice formats in js/practice.js.
+// 306 original multiple-choice questions plus the practice formats in js/practice.js, plus the
+// Study lesson questions in js/study.js (LSAT lessons are part of the LSAT bank).
 const EXTRA_N = Object.values(EXTRA).reduce((a, l) => a + l.length, 0);
-const CORE_N = 306 + EXTRA_N;
+const SCHOOL_LESSONS = STUDY_LESSONS.filter((l) => l.s !== "lsat");
+const STUDY_N = SCHOOL_LESSONS.reduce((a, l) => a + l.qs.length, 0);
+const CORE_N = 306 + EXTRA_N + STUDY_N;
 const isMC = (q) => !q.type;
 // ---- before the LSAT bank is loaded (the site now loads js/lsat.js on demand) ----
 // A store in the exact format the live site saves to localStorage ("study-lab-progress-v1").
@@ -44,7 +50,7 @@ t("saved progress (live-site format) loads unchanged before the LSAT bank loads"
   const after = E.applyAnswer(n, E.QMAP.math1, false, "sure", 1700000006000);
   assert.deepEqual(Object.keys(after).sort(), Object.keys(LIVE_STORE).sort(), "same top-level shape");
   assert.deepEqual(after.cards.lsat27, LIVE_STORE.cards.lsat27, "answering a core question leaves LSAT cards alone");
-  assert.ok(!E.normalize({ ...LIVE_STORE, cards: { lsat65: { b: 1, due: 1, n: 1, k: 1, t: 1 }, "math-x999": { b: 1, due: 1, n: 1, k: 1, t: 1 } } }).cards.lsat65, "unknown ids still dropped");
+  assert.ok(!E.normalize({ ...LIVE_STORE, cards: { lsat75: { b: 1, due: 1, n: 1, k: 1, t: 1 }, "math-x999": { b: 1, due: 1, n: 1, k: 1, t: 1 } } }).cards.lsat75, "unknown ids still dropped");
 });
 t("weakest topic and due counts", () => {
   let st = E.emptyStore();
@@ -80,10 +86,10 @@ t("saved progress is identical whether or not the LSAT bank was loaded", () => {
 t("306 original questions (51 per core subject) plus practice formats, plus the LSAT bank", () => {
   assert.equal(E.CORE_KEYS.length, 6);
   for (const k of E.CORE_KEYS) assert.equal(RAW[k].length, 51, k);
-  assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat" && !q.id.includes("-x")).length, 306);
+  assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat" && !q.id.includes("-x") && !q.id.includes("-s")).length, 306);
   assert.equal(E.QUESTIONS.filter((q) => q.s !== "lsat").length, CORE_N);
   assert.equal(E.QUESTIONS.filter((q) => q.s === "lsat").length, LSAT_ITEMS.length);
-  assert.ok(LSAT_ITEMS.length >= 60 && LSAT_ITEMS.length <= 70, "LSAT bank size " + LSAT_ITEMS.length);
+  assert.ok(LSAT_ITEMS.length >= 70 && LSAT_ITEMS.length <= 80, "LSAT bank size " + LSAT_ITEMS.length);
 });
 t("every multiple-choice question is well formed (4 choices core, 5 choices LSAT)", () => {
   const seenQ = new Set();
@@ -303,7 +309,7 @@ t("practice formats: 10-15 new questions in every category, every format in ever
     for (const type of ["typed", "explain", "order", "match"]) assert.ok(qs.some((q) => q.type === type), k + " has " + type);
     assert.ok(qs.filter((q) => q.p).length >= 2, k + " has a reading set");
   }
-  const lsatNew = E.QUESTIONS.filter((q) => q.s === "lsat" && Number(q.id.slice(4)) >= 50);
+  const lsatNew = E.QUESTIONS.filter((q) => q.s === "lsat" && Number(q.id.slice(4)) >= 50 && Number(q.id.slice(4)) < 65);
   assert.ok(lsatNew.length >= 10 && lsatNew.length <= 15, "LSAT new " + lsatNew.length);
   for (const type of ["typed", "explain", "order", "match"]) assert.ok(lsatNew.some((q) => q.type === type), "LSAT has " + type);
 });
@@ -409,7 +415,7 @@ t("practice formats use the same cards: spaced repetition, levels, merge, backup
   const m = E.mergeStores(st, other);
   assert.equal(m.cards["hist-x0"].t, now + 5, "merge keeps the newest");
   assert.ok(m.cards["geo-x9"] && m.cards.lsat27);
-  assert.equal(E.subjectStats(st, "hist", now).total, 51 + EXTRA.hist.length);
+  assert.equal(E.subjectStats(st, "hist", now).total, 51 + EXTRA.hist.length + E.LESSONS.filter((l) => l.s === "hist").reduce((a, l) => a + l.ids.length, 0));
   assert.deepEqual(E.dueCounts(st, now + 11 * E.MIN), { core: 2, lsat: 3 }, "LSAT drill counted as LSAT once due");
   const w = E.weakestTopic([E.QMAP["eng-x2"], E.QMAP["eng-x5"], E.QMAP["eng-x2"]].reduce((s, q) => E.applyAnswer(s, q, false, "sure", now), E.emptyStore()));
   assert.ok(w && w.s === "eng", "practice answers feed the weakest topic");
@@ -460,6 +466,137 @@ t("LSAT short rounds include drills alongside Logical Reasoning, never passage q
     drills += ids.filter((id) => E.QMAP[id].type).length;
   }
   assert.ok(drills / 50 >= 1.5, "drills per short round " + drills / 50);
+});
+
+// ---- richer feedback (js/context/*.js) ----
+await E.loadContext(E.SUBJECT_KEYS);
+const CTX = {};
+for (const s of E.SUBJECT_KEYS) CTX[s] = (await import(`../js/context/${s}.js`)).default;
+t("every question (all subjects, LSAT, every format) has a topic, key idea and tip", () => {
+  assert.equal(E.QUESTIONS.length, E.TOTAL_QUESTIONS);
+  for (const q of E.QUESTIONS) {
+    const c = CTX[q.s][q.id];
+    assert.ok(c, "no context for " + q.id);
+    for (const f of ["tp", "c", "tip"]) assert.ok(typeof c[f] === "string" && c[f].trim().length >= 8, q.id + " " + f);
+    assert.match(c.tp, /^[^•]+ • [^•]+$/, q.id + " topic is 'Area • Subtopic'");
+    const x = E.contextFor(q);
+    assert.ok(x.topic && x.concept && x.tip && !x.why, q.id);
+  }
+  for (const s in CTX) for (const id in CTX[s]) assert.ok(E.QMAP[id] && E.QMAP[id].s === s, "stray context id " + id);
+});
+t("every wrong multiple-choice option explains itself (or uses the LSAT trap note)", () => {
+  let n = 0;
+  for (const q of E.QUESTIONS) {
+    const w = CTX[q.s][q.id].w;
+    if (E.typeOf(q) !== "mc") { assert.equal(w, undefined, q.id + " has w but isn't multiple choice"); continue; }
+    assert.ok(!w || (w.length <= q.c.length && !w[0]), q.id + " w indexes");
+    for (let i = 1; i < q.c.length; i++) {
+      const why = E.contextFor(q, i).why;
+      assert.ok(why && why.length >= 8, q.id + " option " + i);
+      n++;
+    }
+    assert.equal(E.contextFor(q, 0).why, "", q.id + " right answer has no why-wrong");
+  }
+  assert.ok(n > 1100, "wrong options covered: " + n);
+});
+t("the dangling-modifier question defines the term", () => {
+  const q = E.QUESTIONS.find((x) => /dangling modifier/.test(x.q) && E.typeOf(x) === "mc");
+  const c = E.contextFor(q, 1);
+  assert.match(c.topic, /Dangling modifiers/);
+  assert.match(c.concept, /A dangling modifier (is|has)/);
+  assert.match(q.e, /A dangling modifier is/);
+});
+
+// ---- Study lessons (js/study.js, js/lessons.js) ----
+t("Study: 4 lessons per school subject plus 2 LSAT passages, with stable '<subject>-s<n>' ids", () => {
+  assert.equal(E.LESSONS.length, STUDY_LESSONS.length);
+  for (const k of E.CORE_KEYS) assert.equal(E.LESSONS.filter((l) => l.s === k).length, 4, k);
+  assert.equal(E.LESSONS.filter((l) => l.s === "lsat").length, 2);
+  assert.equal(new Set(E.LESSONS.map((l) => l.key)).size, E.LESSONS.length, "unique lesson keys");
+  for (const k of E.CORE_KEYS) {
+    const ids = E.LESSONS.filter((l) => l.s === k).flatMap((l) => l.ids);
+    assert.deepEqual(ids, ids.map((_, i) => k + "-s" + i), k + " ids numbered in lesson order");
+  }
+  for (const l of E.LESSONS.filter((x) => x.s !== "lsat")) {
+    assert.ok(l.ids.length >= 3 && l.ids.length <= 5, l.key + " has " + l.ids.length + " questions");
+    for (const id of l.ids) {
+      const q = E.QMAP[id];
+      assert.ok(q && q.s === l.s && q.p === l.key && q.lesson === l.key && E.typeOf(q) === "mc", id);
+    }
+    assert.deepEqual(E.passageIds(l.key), l.ids, l.key + " is one reading set");
+  }
+  const stems = E.QUESTIONS.filter((q) => q.lesson).map((q) => q.q);
+  assert.equal(new Set(stems).size, stems.length, "no repeated lesson questions");
+  assert.equal(E.TOTAL_QUESTIONS, 306 + EXTRA_N + STUDY_N + LSAT_ITEMS.length);
+});
+t("Study: every lesson has text (3+ paragraphs, 250+ words) and a glossary of 2+ key terms", () => {
+  for (const l of E.LESSONS) {
+    const p = l.s === "lsat" ? LSAT_PASSAGES[l.p] : LESSON_TEXT[l.key];
+    assert.ok(p, l.key + " text");
+    assert.ok(p.paras.length >= 3, l.key + " paragraphs");
+    assert.ok(p.paras.join(" ").split(/\s+/).length >= 250, l.key + " length");
+    assert.ok(Array.isArray(p.terms) && p.terms.length >= 2, l.key + " key terms");
+    for (const [term, def] of p.terms) assert.ok(term && def && def.length > 15, l.key + " term " + term);
+  }
+  assert.deepEqual(Object.keys(LESSON_TEXT).sort(), SCHOOL_LESSONS.map((l) => l.key).sort(), "text for exactly the school lessons");
+});
+t("Study: LSAT lessons are LSAT Reading Comprehension sets (lsat65+)", () => {
+  for (const l of E.LESSONS.filter((x) => x.s === "lsat")) {
+    assert.ok(E.PASSAGE_KEYS.includes(l.p), l.key + " passage registered");
+    assert.deepEqual(E.passageIds(l.p), l.ids, l.key + " ids are the passage set");
+    assert.ok(l.ids.every((id) => Number(id.slice(4)) >= 65), l.key + " appended after lsat64");
+  }
+});
+t("Study: lesson answers use the same cards (spaced repetition, merge, backup) and show lesson progress", () => {
+  const now = 1_700_000_000_000;
+  const l = E.LESSON_MAP["study-math-1"];
+  let st = E.normalize(JSON.parse(JSON.stringify(LIVE_STORE)));
+  assert.deepEqual(E.lessonProgress(st, l.key), { total: 4, answered: 0, known: 0 });
+  st = E.applyAnswer(st, E.QMAP[l.ids[0]], true, "sure", now);
+  st = E.applyAnswer(st, E.QMAP[l.ids[1]], false, "sure", now);
+  assert.deepEqual(E.lessonProgress(st, l.key), { total: 4, answered: 2, known: 1 });
+  assert.deepEqual(Object.keys(st).sort(), Object.keys(LIVE_STORE).sort(), "same store shape");
+  assert.deepEqual(E.normalize(JSON.parse(JSON.stringify(st))), st, "kept through localStorage JSON");
+  assert.deepEqual(E.decodeBackup(E.encodeBackup(st)).cards, st.cards, "backup code");
+  assert.ok(E.mergeStores(E.emptyStore(), st).cards[l.ids[0]], "merge");
+  assert.equal(E.buildSession(st, ["math"], "due", now + 11 * E.MIN)[0], l.ids[1], "a missed lesson question comes back in Due review");
+  const ls = E.LESSON_MAP["study-lsat-1"];
+  const s2 = E.applyAnswer(E.emptyStore(), E.QMAP[ls.ids[0]], true, "unsure", now);
+  assert.equal(E.lessonProgress(s2, ls.key).answered, 1);
+  assert.deepEqual(E.dueCounts(s2, now + 2 * E.DAY), { core: 0, lsat: 1 }, "LSAT lesson counted as LSAT");
+});
+t("Study: lessons feed the reading sets, so most Mixed rounds include a passage set", () => {
+  let withSet = 0, withLesson = 0;
+  for (let r = 0; r < 300; r++) {
+    const ids = E.buildSession(E.emptyStore(), E.CORE_KEYS, "mixed");
+    const sets = [...new Set(ids.map((id) => E.QMAP[id].p).filter(Boolean))];
+    if (sets.length) withSet++;
+    if (ids.some((id) => E.QMAP[id].lesson)) withLesson++;
+  }
+  assert.ok(withSet >= 150, "mixed rounds with a reading set: " + withSet + "/300");
+  assert.ok(withLesson >= 100, "mixed rounds with a lesson set: " + withLesson + "/300");
+  assert.ok(!E.buildSession(E.emptyStore(), E.CORE_KEYS, "mixed").some((id) => E.QMAP[id].s === "lsat"), "LSAT lessons stay out of Mixed review");
+});
+await (async () => {
+  const p = E.PASSAGES["study-sci-1"];
+  try {
+    assert.equal(p.paras, null, "not loaded at import");
+    assert.equal(p.kind, "lesson");
+    assert.ok(E.needsLessons(["math0", "sci-s0"]) && !E.needsLessons(["math0", "lsat65"]));
+    await E.loadLessons(); await E.loadLessons();
+    assert.ok(E.lessonsLoaded());
+    assert.deepEqual(p.paras, LESSON_TEXT["study-sci-1"].paras);
+    assert.deepEqual(p.terms, LESSON_TEXT["study-sci-1"].terms);
+    console.log("ok   Study: lesson text loads on demand, once, into the passages");
+  } catch (e) { failures++; console.log("FAIL Study: lesson text loads on demand\n     " + e.message); }
+})();
+t("share metadata counts every question (og/twitter text and image version)", () => {
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const n = String(E.TOTAL_QUESTIONS);
+  assert.ok(html.includes('og:description" content="' + n + " "), "og:description");
+  assert.ok(html.includes('twitter:description" content="' + n + " "), "twitter:description");
+  assert.equal((html.match(/og\.png\?v=(\d+)/g) || []).filter((m) => m.endsWith("=" + n)).length, 2, "og.png?v=" + n);
+  assert.ok(html.includes("red " + n + " questions badge"), "image alt text");
 });
 
 console.log(failures ? failures + " failed" : "all engine checks passed");

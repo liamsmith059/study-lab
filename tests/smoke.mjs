@@ -6,6 +6,7 @@ import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CORE_COUNT as CORE_N, TOTAL_QUESTIONS as TOTAL_N, LSAT_META } from "../js/engine.js"; // counts come from the banks
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const siteDir = path.resolve(here, "..");
@@ -103,8 +104,8 @@ try {
   check("home has a separate LSAT card", (await page.locator(".lsat-card").count()) === 1);
   check("header no longer says just 'Six subjects'", /plus LSAT prep/.test(await page.locator(".hero").innerText()));
   const nQ = await page.evaluate(() => window.__studyLab.QUESTIONS.length);
-  check("home loads only the 384 core questions (LSAT bank lazy)", nQ === 384, "n=" + nQ);
-  check("header counts all 449 questions", /449 questions/.test(await page.locator(".hero").innerText()));
+  check("home loads only the " + CORE_N + " core questions (LSAT bank lazy)", nQ === CORE_N, "n=" + nQ);
+  check("header counts all " + TOTAL_N + " questions", new RegExp(TOTAL_N + " questions").test(await page.locator(".hero").innerText()));
   check("lsat.js and supabase-js not fetched on the home page", lsatRequests.length === 0, lsatRequests.join(","));
   check("#app is no longer a page-wide live region", (await page.locator("#app[aria-live]").count()) === 0);
   check("empty mastery bars hidden before any progress", (await page.locator(".subject .bar, .lsat-card .bar").count()) === 0);
@@ -214,7 +215,7 @@ try {
   await hp.goto(BASE);
   await hp.locator(".subject").first().waitFor();
   check("saved progress from the live site is left byte-for-byte untouched on load", (await hp.evaluate(() => localStorage.getItem("study-lab-progress-v1"))) === LIVE_JSON);
-  check("saved LSAT progress counted on the home page without loading the LSAT bank", /2\/65 seen/i.test(await hp.locator(".lsat-card").innerText()) && (await hp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 384);
+  check("saved LSAT progress counted on the home page without loading the LSAT bank", new RegExp("2/" + LSAT_META.total + " seen", "i").test(await hp.locator(".lsat-card").innerText()) && (await hp.evaluate(() => window.__studyLab.QUESTIONS.length)) === CORE_N);
   check("Due now is the same set on home: school subjects + LSAT noted", /\+ 1 LSAT/.test(await hp.locator(".metrics").first().innerText()));
   await hp.locator('[data-arg="subject:geo"]').click();
   await mcFirst(hp);
@@ -277,9 +278,9 @@ try {
   });
   const tops = outline.items.filter((x) => !x.sub).map((x) => x.label);
   const subjSubs = []; { let inS = false; for (const x of outline.items) { if (!x.sub) inS = x.label === "Subjects"; else if (inS) subjSubs.push(x.label); } }
-  check("menu: one entry per page section, in page order", tops.length === outline.sections && JSON.stringify(tops) === JSON.stringify(["Today", "Subjects", "LSAT prep", "Mastery by subject", "How it works", "Backup and reset"]), JSON.stringify(tops));
+  check("menu: one entry per page section, in page order", tops.length === outline.sections && JSON.stringify(tops) === JSON.stringify(["Today", "Subjects", "Study", "LSAT prep", "Mastery by subject", "How it works", "Backup and reset"]), JSON.stringify(tops));
   check("menu: subjects indented under Subjects, read from their h3s", JSON.stringify(subjSubs) === JSON.stringify(outline.tiles) && subjSubs.length === 6, JSON.stringify(subjSubs));
-  check("menu: How it works lists its 8 steps (incl. Question formats); every entry points at a real id", outline.items.filter((x) => x.sub && x.id.startsWith("howto-")).length === 8 && outline.items.every((x) => x.exists));
+  check("menu: How it works lists its 9 steps (incl. Study lessons and Question formats); every entry points at a real id", outline.items.filter((x) => x.sub && x.id.startsWith("howto-")).length === 9 && outline.items.every((x) => x.exists));
   await hp.mouse.move(700, 700);
   await hp.waitForTimeout(120);
   const stillOpen = !(await mstate()).hidden;
@@ -300,7 +301,7 @@ try {
   const k5 = await mstate();
   await hp.keyboard.press("Tab");
   const k6 = await hp.evaluate(() => document.activeElement.className);
-  for (let i = 0; i < 25 && (await hp.evaluate(() => document.getElementById("menu-panel").contains(document.activeElement))); i++) await hp.keyboard.press("Tab");
+  for (let i = 0; i < 60 && (await hp.evaluate(() => document.getElementById("menu-panel").contains(document.activeElement))); i++) await hp.keyboard.press("Tab");
   check("menu keys: Enter toggles it open, Tab walks the entries, tabbing out closes it", !k5.hidden && /menu-item/.test(k6) && (await mstate()).hidden, JSON.stringify([k5, k6]));
   await hp.locator("#menu-btn").click();
   check("menu: click opens it (pinned)", !(await mstate()).hidden);
@@ -375,7 +376,7 @@ try {
   await lp.locator(".question.stem").waitFor();
   await mcFirst(lp);
   check("LSAT short: question 1 of 10", (await lp.locator(".quiz-progress").innerText()).includes("1 / 10"));
-  check("LSAT bank loaded on demand (449 questions)", (await lp.evaluate(() => window.__studyLab.QUESTIONS.length)) === 449);
+  check("LSAT bank loaded on demand (" + TOTAL_N + " questions)", (await lp.evaluate(() => window.__studyLab.QUESTIONS.length)) === TOTAL_N);
   check("LSAT round hash is #lsat/short", (await lp.evaluate(() => location.hash)) === "#lsat/short");
   const letters = await lp.locator(".choice .letter").allInnerTexts();
   check("LSAT short: five choices lettered A-E", letters.join("") === "ABCDE", letters.join(""));
@@ -386,7 +387,8 @@ try {
   const lfb = await lp.locator(".callout").innerText();
   check("LSAT: key 5 answers choice E", (await lp.locator(".choice").nth(4).getAttribute("class")).match(/correct|wrong/) !== null);
   check("LSAT feedback reads 'The answer is (X)'", /The answer is \([A-E]\)\./.test(lfb), JSON.stringify(lfb.slice(0, 80)));
-  check("LSAT feedback has a 'Tempting but wrong' line", /Tempting but wrong: \([A-E]\)/.test(lfb));
+  // Picking the trap itself explains it under "Why your answer was wrong" instead of repeating it.
+  check("LSAT feedback has a 'Tempting but wrong' line (or explains the picked trap)", /Tempting but wrong: \([A-E]\)/.test(lfb) || (await lp.locator(".ctx-why").count()) === 1);
   const lst = await lp.evaluate(() => JSON.parse(localStorage.getItem("study-lab-progress-v1")));
   check("LSAT answer saved under an lsat id", Object.keys(lst.cards).every((k) => k.startsWith("lsat")) && lst.total === 1);
   await lp.keyboard.press("Enter");
@@ -751,7 +753,7 @@ try {
   await tp.goto(BASE); await tp.reload();
   await tp.locator(".subject").first().waitFor();
   const sv2 = await readStore(tp);
-  check("progress: new-format cards survive a reload", Object.keys(sv.cards).every((k) => JSON.stringify(sv2.cards[k]) === JSON.stringify(sv.cards[k])) && Object.keys(sv2.cards).length === Object.keys(sv.cards).length && /2\/65 seen/i.test(await tp.locator(".lsat-card").innerText()), JSON.stringify([Object.keys(sv.cards).length, Object.keys(sv2.cards).length, await tp.locator(".lsat-card").innerText()]).slice(0, 300));
+  check("progress: new-format cards survive a reload", Object.keys(sv.cards).every((k) => JSON.stringify(sv2.cards[k]) === JSON.stringify(sv.cards[k])) && Object.keys(sv2.cards).length === Object.keys(sv.cards).length && new RegExp("2/" + LSAT_META.total + " seen", "i").test(await tp.locator(".lsat-card").innerText()), JSON.stringify([Object.keys(sv.cards).length, Object.keys(sv2.cards).length, await tp.locator(".lsat-card").innerText()]).slice(0, 300));
   check("no console errors (question formats)", terr.length === 0, terr.join(" | "));
 
   // Phone, 390px dark: every format fits without sideways scrolling, before and after answering
@@ -914,7 +916,8 @@ try {
       await pg.evaluate(() => window.scrollTo(0, 0));
       await (mob ? pg.locator("#menu-btn").tap() : pg.locator("#menu-btn").click());
       await pg.locator("#menu-panel .menu-item.top", { hasText: label }).click();
-      await pg.waitForTimeout(1100);
+      await pg.waitForTimeout(600);
+      for (let i = 0, y = -1; i < 30; i++) { const ny = await pg.evaluate(() => scrollY); if (ny === y) break; y = ny; await pg.waitForTimeout(150); } // smooth scroll has settled
       const pos = await pg.evaluate((label) => {
         const nb = document.getElementById("nav").getBoundingClientRect().bottom;
         const h2 = [...document.querySelectorAll("#app h2")].find((x) => x.textContent.trim() === label || x.closest(".lsat-card") && label === "LSAT prep");
@@ -976,6 +979,179 @@ try {
   const scan = ["index.html", "README.md", "lsat-research.md", "js/app.js", "js/sync.js", "js/menu.js", "supabase/schema.sql", ".github/workflows/pages.yml"].filter((f) => fsMod.existsSync(path.join(here, "..", f)));
   const stale = scan.filter((f) => /study-lab-\/|github\.io\/study-lab-|github\.com\/liamsmith059\/study-lab-/.test(fsMod.readFileSync(path.join(here, "..", f), "utf8")));
   check("#4: no links to the old /study-lab-/ address anywhere in the site or docs", stale.length === 0, stale.join(","));
+
+  // ---- richer feedback: topic, why your answer was wrong, key idea, how to improve ----
+  for (const [tag, vp, mobile] of [["desktop", { width: 1280, height: 800 }, false], ["phone 390", { width: 390, height: 844 }, true]]) {
+    const xc = await browser.newContext({ viewport: vp, isMobile: mobile, hasTouch: mobile });
+    await localOnly(xc);
+    const xp = await xc.newPage();
+    const xerrs = watch(xp);
+    const ctxReq = [];
+    xp.on("request", (r) => { if (/\/context\//.test(r.url())) ctxReq.push(r.url().split("/").pop()); });
+    await xp.goto(BASE); await xp.locator(".subject").first().waitFor();
+    check(`explanations ${tag}: context files aren't fetched on the home page`, ctxReq.length === 0, ctxReq.join(","));
+    await xp.evaluate(() => window.__studyLab.start("subject", ["eng"], { ids: ["eng30", "eng5", "eng-x0"] }));
+    await xp.locator("#q-stem").waitFor();
+    await xp.waitForFunction(() => performance.getEntriesByType("resource").some((e) => /context\/eng\.js/.test(e.name)));
+    const wi = await xp.evaluate(() => window.__studyLab.state.sess.items[0].order.indexOf("Walking to school, I got caught in the rain."));
+    const press = (loc) => (mobile ? loc.tap() : loc.click());
+    await press(xp.locator(".choice").nth(wi));
+    await xp.locator(".ctx-why").waitFor();
+    const wrong = await xp.evaluate(() => ({
+      topic: document.querySelector(".ctx-topic").textContent,
+      heads: [...document.querySelectorAll("#ctx .ctx-h")].map((h) => h.textContent),
+      why: document.querySelector(".ctx-why p").textContent,
+      key: document.querySelector(".ctx-key p").textContent,
+      inStatus: !!document.querySelector("#feedback .ctx, #feedback .ctx-topic"),
+      details: !!document.querySelector("details.ctx-more"),
+      order: [...document.querySelectorAll(".ctx-topic, #feedback, #ctx")].map((e) => e.id || e.className),
+    }));
+    check(`explanations ${tag}: a wrong answer shows the topic, why that choice was wrong, the key idea and a tip`,
+      /Grammar • Dangling modifiers/.test(wrong.topic) && wrong.heads.join("|") === "Why your answer was wrong|Key idea|How to improve" && /nothing dangles/.test(wrong.why) && /A dangling modifier has nothing sensible to describe/.test(wrong.key) && !wrong.details, JSON.stringify(wrong));
+    check(`explanations ${tag}: the role=status callout holds only the verdict and explanation; topic first, context after`, !wrong.inStatus && wrong.order.join(",") === "ctx-topic,feedback,ctx", wrong.order.join(","));
+    const ov1 = await xp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await press(xp.locator('[data-action="next"]'));
+    await xp.locator("#q-stem").waitFor();
+    await answerCurrent(xp, true, mobile);
+    const right = await xp.evaluate(() => { const d = document.querySelector("details.ctx-more"); return { d: !!d, open: d && d.open, why: !!document.querySelector(".ctx-why"), topic: !!document.querySelector(".ctx-topic"), hidden: d && !d.querySelector(".ctx-key").checkVisibility() }; });
+    check(`explanations ${tag}: a right answer shows the topic, with Key idea / tip folded under 'More context'`, right.d && !right.open && right.hidden && !right.why && right.topic, JSON.stringify(right));
+    await press(xp.locator("details.ctx-more > summary"));
+    const opened = await xp.evaluate(() => document.querySelector("details.ctx-more").open && document.querySelector(".ctx-more .ctx-tip").checkVisibility());
+    check(`explanations ${tag}: 'More context' opens`, opened);
+    const ov2 = await xp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await press(xp.locator('[data-action="next"]'));
+    await xp.locator("#typed-input").waitFor();
+    await answerCurrent(xp, false, mobile);
+    const typed = await xp.evaluate(() => [...document.querySelectorAll("#ctx .ctx-h")].map((h) => h.textContent).join("|"));
+    check(`explanations ${tag}: a wrong recall answer shows Key idea and How to improve (no option to explain)`, typed === "Key idea|How to improve", typed);
+    const ov3 = await xp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    check(`explanations ${tag}: no sideways scroll on any feedback view`, ov1 <= 0 && ov2 <= 0 && ov3 <= 0, JSON.stringify([ov1, ov2, ov3]));
+    // finish the round (second try of eng30 comes back), then the summary groups misses by topic
+    await press(xp.locator('[data-action="next"]'));
+    while (await xp.locator("#q-stem").count()) { await answerCurrent(xp, true, mobile); await press(xp.locator('[data-action="next"]')); }
+    await xp.locator(".topics-work").waitFor();
+    const tw = await xp.locator(".topics-work").innerText();
+    check(`explanations ${tag}: the summary lists 'Topics to work on' with tips`, /Topics to work on/.test(tw) && /Dangling modifiers/.test(tw) && /Irregular plurals/.test(tw), tw.slice(0, 120));
+    if (!mobile) {
+      // LSAT: picking the trap answer (no separate why-wrong) explains it once, from the trap note
+      await xp.evaluate(() => window.__studyLab.loadLsat());
+      await xp.evaluate(() => window.__studyLab.start("lsat-short", ["lsat"], { ids: ["lsat0"] }));
+      await xp.locator("#q-stem").waitFor();
+      await xp.waitForFunction(() => performance.getEntriesByType("resource").some((e) => /context\/lsat\.js/.test(e.name)));
+      const ti = await xp.evaluate(() => { const { state, QMAP } = window.__studyLab; const q = QMAP.lsat0; return state.sess.items[0].order.indexOf(q.trap); });
+      await xp.locator(".choice").nth(ti).click();
+      await xp.locator(".ctx-why").waitFor();
+      const lw = await xp.evaluate(() => ({ why: document.querySelector(".ctx-why p").textContent, traps: document.querySelectorAll(".trap").length, te: window.__studyLab.QMAP.lsat0.te }));
+      check("explanations: LSAT trap pick explains why once (no duplicate 'Tempting but wrong')", lw.why === lw.te && lw.traps === 0, JSON.stringify({ traps: lw.traps }));
+    }
+    check(`explanations ${tag}: no console errors`, xerrs.length === 0, xerrs.join(" | "));
+    await xc.close();
+  }
+
+  // ---- Study: read a lesson, check understanding, lesson questions join reviews ----
+  for (const [tag, vp, mobile] of [["desktop", { width: 1280, height: 800 }, false], ["phone 390", { width: 390, height: 844 }, true]]) {
+    const sc = await browser.newContext({ viewport: vp, isMobile: mobile, hasTouch: mobile });
+    await localOnly(sc);
+    const sp = await sc.newPage();
+    const serrs = watch(sp);
+    const lessonReq = [];
+    sp.on("request", (r) => { if (/\/lessons\.js/.test(r.url())) lessonReq.push(r.url()); });
+    const press = (loc) => (mobile ? loc.tap() : loc.click());
+    const overflow = () => sp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await sp.goto(BASE); await sp.locator(".subject").first().waitFor();
+    const home = await sp.evaluate(() => ({ groups: [...document.querySelectorAll("#study .study-group h3")].map((h) => h.textContent), links: document.querySelectorAll("#study .lesson-link").length, n: window.__studyLab.LESSONS.length }));
+    check(`study ${tag}: home lists every lesson by subject (7 groups incl. LSAT)`, home.links === home.n && home.n === 26 && home.groups.length === 7 && home.groups[6] === "LSAT", JSON.stringify(home));
+    check(`study ${tag}: lesson text isn't fetched on the home page`, lessonReq.length === 0);
+    // keyboard: focus a lesson and press Enter
+    await sp.locator('.lesson-link[data-arg="study-sci-1"]').focus();
+    await sp.keyboard.press("Enter");
+    await sp.locator(".lesson-body").waitFor();
+    const lv = await sp.evaluate(() => ({ hash: location.hash, title: document.title, h1: document.querySelector("h1").textContent, focus: document.activeElement.tagName, marks: [...document.querySelectorAll(".lesson-body mark.kt")].map((m) => m.textContent.toLowerCase()), dts: document.querySelectorAll(".glossary dt").length, lists: document.querySelectorAll(".lesson-body .lp-list li").length, gloss: !!document.querySelector('aside.glossary[aria-labelledby="gloss-h"]') }));
+    check(`study ${tag}: a lesson opens on its own address with its title, focus on the heading`, lv.hash === "#study/study-sci-1" && lv.h1 === "Cells: The Building Blocks of Life" && /^Cells: The Building Blocks of Life — /.test(lv.title) && lv.focus === "H1", JSON.stringify(lv));
+    check(`study ${tag}: key terms are highlighted in the text and listed in a Key terms box`, lv.marks.length >= 5 && lv.marks.includes("mitochondria") && lv.dts === 6 && lv.gloss && lv.lists >= 4, JSON.stringify(lv));
+    check(`study ${tag}: lesson text loads on demand`, lessonReq.length === 1, String(lessonReq.length));
+    check(`study ${tag}: no sideways scroll on the lesson`, (await overflow()) <= 0);
+    // Mark as studied toggles a separate key and leaves saved progress alone
+    const before = await sp.evaluate(() => localStorage.getItem("study-lab-progress-v1"));
+    await press(sp.locator('[data-action="studied"]'));
+    const mk = await sp.evaluate(() => ({ pressed: document.querySelector('[data-action="studied"]').getAttribute("aria-pressed"), focus: document.activeElement.dataset.action, key: JSON.parse(localStorage.getItem("study-lab-studied-v1") || "{}"), prog: localStorage.getItem("study-lab-progress-v1") }));
+    check(`study ${tag}: 'Mark as studied' is a toggle button (aria-pressed), stored apart from progress`, mk.pressed === "true" && mk.focus === "studied" && !!mk.key["study-sci-1"] && mk.prog === before, JSON.stringify(mk).slice(0, 200));
+    await press(sp.locator('[data-action="studied"]'));
+    check(`study ${tag}: and toggles back off`, (await sp.evaluate(() => document.querySelector('[data-action="studied"]').getAttribute("aria-pressed"))) === "false");
+    // Check my understanding: the lesson's questions in the quiz, the lesson beside them
+    await press(sp.locator('[data-action="check"]'));
+    await sp.locator("#q-stem").waitFor();
+    const q1 = await sp.evaluate(() => { const { state, QMAP } = window.__studyLab; const s = state.sess; return { hash: location.hash, ids: s.items.map((i) => i.qid), kicker: document.querySelector(".kicker").textContent, panel: document.querySelector("#passage-title").textContent, marks: document.querySelectorAll("#passage mark.kt").length, bar: document.querySelector(".lsat-bar-btn") && document.querySelector(".lsat-bar-btn").textContent, title: document.title }; });
+    check(`study ${tag}: 'Check my understanding' runs the lesson's questions with the lesson beside them`, q1.hash === "#study/study-sci-1/check" && q1.ids.join() === "sci-s0,sci-s1,sci-s2,sci-s3" && /^Study: Cells/.test(q1.kicker) && /Cells: The Building Blocks of Life/.test(q1.panel) && q1.marks >= 5, JSON.stringify(q1));
+    if (mobile) {
+      await sp.locator(".lsat-bar-btn").tap();
+      const op = await sp.evaluate(() => ({ exp: document.querySelector(".lsat-bar-btn").getAttribute("aria-expanded"), txt: document.querySelector(".lsat-bar-btn").textContent, open: document.getElementById("passage").classList.contains("open") }));
+      check("study phone: 'Show lesson' reopens the lesson text from the questions", q1.bar === "Show lesson" && op.exp === "true" && op.txt === "Hide lesson" && op.open, JSON.stringify([q1.bar, op]));
+      await sp.locator(".lsat-bar-btn").tap();
+    }
+    // first answer wrong: richer feedback; then finish the round
+    await sp.waitForFunction(() => performance.getEntriesByType("resource").some((e) => /context\/sci\.js/.test(e.name)));
+    await answerCurrent(sp, false, mobile);
+    await sp.locator(".ctx-why").waitFor();
+    const fb = await sp.evaluate(() => ({ topic: document.querySelector(".ctx-topic").textContent, heads: [...document.querySelectorAll("#ctx .ctx-h")].map((h) => h.textContent).join("|") }));
+    check(`study ${tag}: lesson questions get the richer feedback (topic, why wrong, key idea, tip)`, /Cells • Prokaryotes/.test(fb.topic) && fb.heads === "Why your answer was wrong|Key idea|How to improve", JSON.stringify(fb));
+    check(`study ${tag}: no sideways scroll on a lesson question`, (await overflow()) <= 0);
+    await press(sp.locator('[data-action="next"]'));
+    while (await sp.locator("#q-stem").count()) { await answerCurrent(sp, true, mobile); await press(sp.locator('[data-action="next"]')); }
+    await sp.locator(".results").waitFor();
+    const sm = await sp.evaluate(() => ({ note: (document.querySelector(".results .callout") || {}).textContent || "", btns: [...document.querySelectorAll(".results .actions .btn")].map((b) => b.textContent), cards: Object.keys(JSON.parse(localStorage.getItem("study-lab-progress-v1")).cards).filter((k) => /^sci-s/.test(k)).sort(), studied: !!JSON.parse(localStorage.getItem("study-lab-studied-v1") || "{}")["study-sci-1"] }));
+    check(`study ${tag}: finishing the check marks the lesson studied and saves its answers as review cards`, /Lesson studied/.test(sm.note) && sm.studied && sm.cards.join() === "sci-s0,sci-s1,sci-s2,sci-s3", JSON.stringify(sm));
+    check(`study ${tag}: the summary offers Back to the lesson / Try these again / Back to Study`, sm.btns.join("|") === "Back to the lesson|Try these again|Back to Study", sm.btns.join("|"));
+    await press(sp.locator('[data-action="tolesson"]'));
+    await sp.waitForFunction(() => location.hash === "#study/study-sci-1" && document.querySelector(".lesson-body"));
+    const st2 = await sp.evaluate(() => ({ status: document.getElementById("lesson-status").textContent, pressed: document.querySelector('[data-action="studied"]').getAttribute("aria-pressed") }));
+    check(`study ${tag}: Back to the lesson shows it as studied`, /^Studied\./.test(st2.status) && st2.pressed === "true", JSON.stringify(st2));
+    await sp.goBack();
+    await sp.locator("#study").waitFor();
+    const h2 = await sp.evaluate(() => ({ hash: location.hash, view: window.__studyLab.state.view, item: document.querySelector('.lesson-link[data-arg="study-sci-1"]').textContent, next: (document.querySelector('#study .actions [data-action="lesson"]') || {}).textContent }));
+    check(`study ${tag}: Back from the lesson returns to the home page, which ticks the lesson off`, h2.hash === "" && h2.view === "home" && /Studied/.test(h2.item) && /Next lesson: Percentages and Ratios/.test(h2.next), JSON.stringify(h2));
+    await sp.reload(); await sp.locator("#study").waitFor();
+    check(`study ${tag}: studied state and lesson answers survive a reload`, /Studied/.test(await sp.locator('.lesson-link[data-arg="study-sci-1"]').innerText()) && /4\/4 known|3\/4 known/.test(await sp.locator('.lesson-link[data-arg="study-sci-1"]').innerText()));
+    if (!mobile) {
+      // a lesson's own address works when opened directly, and Back stays on the site
+      await sp.goto(BASE + "#study/study-econ-2");
+      await sp.locator(".lesson-body").waitFor();
+      check("study: opening a lesson's address directly shows it", (await sp.locator("h1").innerText()) === "Inflation, Interest Rates, and the Bank of Canada");
+      await sp.goBack();
+      await sp.locator("#study").waitFor();
+      check("study: Back from a directly opened lesson lands on the home page", (await sp.evaluate(() => location.hash)) === "" && (await sp.evaluate(() => window.__studyLab.state.view)) === "home");
+      // LSAT lessons are LSAT passage sets: fixed A-E choices, the passage beside the questions
+      await sp.locator('.lesson-link[data-arg="study-lsat-2"]').click();
+      await sp.locator(".lesson-body").waitFor();
+      const ll = await sp.evaluate(() => ({ h1: document.querySelector("h1").textContent, marks: document.querySelectorAll(".lesson-body mark.kt").length, n: window.__studyLab.QUESTIONS.length }));
+      await sp.locator('[data-action="check"]').click();
+      await sp.locator("#q-stem").waitFor();
+      const lq = await sp.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[0]; return { id: it.qid, letters: [...document.querySelectorAll(".choice .key, .choice .letter")].length, n: document.querySelectorAll(".choice").length, fixed: JSON.stringify(it.order) === JSON.stringify(QMAP[it.qid].fixed), p: QMAP[it.qid].p, total: state.sess.total }; });
+      check("study: an LSAT lesson loads the LSAT bank and checks with its five-choice A-E set", ll.h1 === "The Limits of Tree-Ring Dating" && ll.marks >= 2 && ll.n === TOTAL_N && lq.id === "lsat70" && lq.n === 5 && lq.fixed && lq.p === "treerings" && lq.total === 5, JSON.stringify([ll, lq]));
+      await sp.locator('[data-nav="end"]').click();
+    }
+    check(`study ${tag}: no console errors`, serrs.length === 0, serrs.join(" | "));
+    await sc.close();
+  }
+  {
+    // offline: the lesson can't load, so say so; rounds carry on without lesson questions
+    const oc = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await localOnly(oc);
+    await oc.route("**/js/lessons.js", (r) => r.abort());
+    const op = await oc.newPage();
+    await op.goto(BASE); await op.locator("#study").waitFor();
+    await op.locator('.lesson-link[data-arg="study-math-2"]').click();
+    await op.locator("#study [role=alert]").waitFor();
+    check("study offline: a lesson that can't load says so and stays on the home page", /Couldn't load the lesson/.test(await op.locator("#study [role=alert]").innerText()) && (await op.evaluate(() => window.__studyLab.state.view)) === "home");
+    let ok = true;
+    for (let i = 0; i < 6; i++) {
+      await op.evaluate(() => window.__studyLab.start("mixed", ["math", "sci", "hist", "geo", "eng", "econ"], { how: "replace" }));
+      await op.locator("#q-stem").waitFor();
+      ok = ok && (await op.evaluate(() => { const { state, QMAP } = window.__studyLab; return state.sess.items.length > 0 && state.sess.items.every((it) => !QMAP[it.qid].lesson); }));
+    }
+    check("study offline: Mixed review still starts, leaving lesson questions out", ok);
+    await oc.close();
+  }
 } catch (e) {
   failures++;
   console.log("FAIL exception: " + e.message);

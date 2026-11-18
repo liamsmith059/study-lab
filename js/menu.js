@@ -24,7 +24,7 @@ export function tagSections(container) {
     const subs = [];
     for (const h3 of sec.querySelectorAll("h3")) {
       const text = h3.textContent.trim();
-      if (!text) continue;
+      if (!text || h3.closest("[data-menu-flat]")) continue; // e.g. Study's subject groups: one Menu entry is enough
       if (!h3.id) h3.id = sec.id + "-" + slug(text);
       subs.push({ id: h3.id, label: text });
     }

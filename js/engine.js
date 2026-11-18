@@ -2,6 +2,7 @@
 // No DOM access here, so it can be tested in Node.
 import { RAW } from "./questions.js";
 import { EXTRA, EXTRA_PASSAGES } from "./practice.js";
+import { STUDY_LESSONS } from "./study.js";
 // The LSAT bank (js/lsat.js, ~80 KB) is loaded on demand with loadLsat(), so the home page and the
 // core subjects don't pay for it. Until it loads, LSAT progress is still kept, counted and merged by id.
 
@@ -22,7 +23,8 @@ export const PASSAGES = {};
 // Size of the LSAT bank, known without loading it (checked against js/lsat.js by the tests).
 // IDs are "lsat0".."lsat64"; new items are only ever appended. lr/rc count multiple-choice items,
 // x counts the recall / explain / order / match drills.
-export const LSAT_META = { total: 65, lr: 29, rc: 26, sets: 5, x: 10 };
+// lsat65..lsat74 are the two Study lesson passage sets (js/study.js lists them).
+export const LSAT_META = { total: 75, lr: 29, rc: 36, sets: 7, x: 10 };
 // Question formats. "mc" is the original multiple choice; the rest are the practice formats (js/practice.js).
 export const TYPES = ["mc", "typed", "explain", "order", "match"];
 export const TYPE_LABEL = { mc: "", typed: "Recall", explain: "Explain why", order: "Put in order", match: "Match" };
@@ -46,6 +48,28 @@ for (const s of Object.keys(EXTRA)) {
   });
 }
 Object.assign(PASSAGES, EXTRA_PASSAGES);
+// Study lessons (js/study.js): each lesson is a reading passage whose questions get ids "<subject>-s<n>",
+// numbered in lesson order within the subject. They are ordinary multiple-choice questions with `p` set,
+// so they join spaced repetition and the reading sets in rounds. The passage text (js/lessons.js) is
+// loaded on demand with loadLessons(); until then a lesson's passage has its title but no paragraphs.
+export const LESSONS = [];
+const studyCount = {};
+for (const l of STUDY_LESSONS) {
+  const p = l.s === "lsat" ? l.p : l.key;
+  const lesson = { key: l.key, s: l.s, title: l.title, topic: l.topic, p, ids: l.ids ? l.ids.slice() : [] };
+  if (l.s !== "lsat") {
+    PASSAGES[p] = { title: l.title, area: "Study lesson · " + (SUBJECTS.find((x) => x.key === l.s) || { name: l.s }).name, kind: "lesson", lesson: l.key, paras: null, terms: [] };
+    for (const r of l.qs) {
+      const k = studyCount[l.s] || 0;
+      studyCount[l.s] = k + 1;
+      const q = { id: l.s + "-s" + k, s: l.s, d: r.d, t: l.t, q: r.q, c: r.c, e: r.e, p, lesson: l.key };
+      QUESTIONS.push(q);
+      lesson.ids.push(q.id);
+    }
+  }
+  LESSONS.push(lesson);
+}
+export const LESSON_MAP = Object.fromEntries(LESSONS.map((l) => [l.key, l]));
 export const QMAP = Object.fromEntries(QUESTIONS.map((q) => [q.id, q]));
 export const CORE_COUNT = QUESTIONS.length;
 export const TOTAL_QUESTIONS = CORE_COUNT + LSAT_META.total;
@@ -82,6 +106,58 @@ export function loadLsat() {
   }
   return lsatState;
 }
+
+// Lesson text for the Study lessons (js/lessons.js, ~70 KB), fetched the first time a lesson or a round
+// with lesson questions opens. LSAT lessons are LSAT passages, so they come with loadLsat().
+let lessonState = null;
+export const lessonsLoaded = () => Object.values(PASSAGES).every((p) => p.kind !== "lesson" || !!p.paras);
+export function loadLessons() {
+  if (!lessonState) {
+    lessonState = import("./lessons.js").then((m) => {
+      for (const [key, v] of Object.entries(m.LESSON_TEXT)) {
+        const p = PASSAGES[key];
+        if (p) { p.paras = v.paras; p.terms = v.terms; }
+      }
+    }).catch((err) => { lessonState = null; throw err; });
+  }
+  return lessonState;
+}
+// Everything a set of questions needs on screen: the LSAT bank and/or the lesson text.
+export const needsLessons = (ids) => ids.some((id) => QMAP[id] && QMAP[id].lesson);
+// A lesson's progress from the saved cards (so it syncs like everything else): how many of its
+// questions have been answered, and how many are currently known (last answer right, box 2+).
+export function lessonProgress(st, key) {
+  const l = LESSON_MAP[key];
+  if (!l) return { total: 0, answered: 0, known: 0 };
+  let answered = 0, known = 0;
+  for (const id of l.ids) { const c = st.cards[id]; if (!c) continue; answered++; if (c.b >= 2) known++; }
+  return { total: l.ids.length, answered, known };
+}
+
+// Extra feedback (topic, key idea, why each wrong choice is wrong, a study tip) lives in
+// js/context/<subject>.js, keyed by question id. It's loaded on demand when a round starts, so the
+// home page doesn't pay for it, and it never touches saved progress.
+const CONTEXT = {};
+const contextState = {};
+export function loadContext(keys) {
+  return Promise.all([...new Set(keys)].filter((s) => SUBJECT_KEYS.includes(s)).map((s) => {
+    if (!contextState[s]) {
+      contextState[s] = import("./context/" + s + ".js").then((m) => { Object.assign(CONTEXT, m.default); })
+        .catch((err) => { contextState[s] = null; throw err; });
+    }
+    return contextState[s];
+  }));
+}
+// Feedback extras for a question. `picked` is the index of the chosen option in q.c (0 = correct),
+// or -1 when there's no single chosen option. Returns null until that subject's context has loaded.
+export function contextFor(q, picked = -1) {
+  const c = CONTEXT[q.id];
+  if (!c) return null;
+  let why = "";
+  if (picked > 0) why = (c.w && c.w[picked]) || (q.trap && q.c[picked] === q.trap ? q.te || "" : "");
+  return { topic: c.tp || subjectTopic(q), concept: c.c || "", tip: c.tip || "", why };
+}
+const subjectTopic = (q) => (SUBJECTS.find((x) => x.key === q.s) || { name: q.s }).name + " • " + q.t;
 
 // A saved card id we recognise: a loaded question, or an LSAT id (even before the LSAT bank loads).
 export function knownId(id) {

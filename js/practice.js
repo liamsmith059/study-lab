@@ -168,7 +168,7 @@ export const EXTRA = {
       e: "The simile compares something worthless (a bent nail) to something precious, and his line \"Everything is useful\" confirms it." },
     { type: "mc", d: 2, t: "Reading", p: "eng-workshop", q: "Why does Grandpa hand the narrator the drawer of bent nails instead of new wood?",
       c: ["To show that the imperfect birdhouse is still worth finishing", "Because he has run out of new wood", "To punish the narrator for measuring badly", "Because bent nails are stronger"],
-      e: "The narrator wants to start over; Grandpa's answer echoes his belief that things are useful \"until you decide they aren't.\"" },
+      e: "The narrator wants to start over; Grandpa's answer echoes his belief that \"Everything is useful … until you decide it isn't.\"" },
     { type: "mc", d: 2, t: "Reading", p: "eng-workshop", q: "The detail that the wrens were \"unbothered by the tilt\" mainly emphasises that:",
       c: ["Something imperfect can still do its job well", "Wrens prefer crooked houses", "The narrator rebuilt the roof", "The birdhouse was put in the wrong place"],
       e: "The ending pays off the story's theme: the crooked birdhouse works perfectly well for the birds." },

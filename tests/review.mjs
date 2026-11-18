@@ -101,6 +101,10 @@ const PAIRS = [
   ["--text", "--ok-soft", "Order/Match: text on a correct row"], ["--text", "--tint-soft", "Order/Match: text on a wrong row or selected term"],
   ["--muted", "--tint-soft", "Match: crossed-out wrong meaning"], ["--muted", "--ok-soft", "Order: position number on a correct row"],
   ["--card", "--text", "Match: pair number badge (inverted)"],
+  ["--red-text", "--tint-soft", "Feedback: topic tag"], ["--text", "--card-2", "Feedback: why-wrong / key idea / tip text"],
+  ["--muted", "--card-2", "Feedback: 'Key idea' / 'How to improve' headings"], ["--red-text", "--card-2", "Feedback: 'Why your answer was wrong' heading"],
+  ["--text", "--tint-soft", "Study: highlighted key term in a lesson"], ["--ok", "--card", "Study: 'Studied' tick in the lesson list"],
+  ["--muted", "--card", "Study: lesson meta and glossary definitions"],
 ];
 const report = {};
 for (const theme of ["light", "dark"]) {
@@ -292,6 +296,90 @@ for (const [theme, phone] of [["light", false], ["dark", false], ["dark", true]]
   await p.screenshot({ path: path.join(msOut, `menu-hover-${tag}.png`), clip: phone ? { x: 0, y: 0, width: 390, height: Math.min(844, r.bottom + 8) } : { x: 0, y: 0, width: Math.min(1440, r.right + 420), height: Math.min(900, r.bottom + 24) } });
   await ctx.close();
 }
+// ---- Explanations: wrong answer (why / key idea / tip), right answer (folded 'More context'), summary topics ----
+const exOut = path.join(out, "explanations");
+fs.mkdirSync(exOut, { recursive: true });
+for (const [theme, phone] of [["light", false], ["dark", true], ["dark", false], ["light", true]]) {
+  const vp = phone ? { width: 390, height: 844 } : { width: 1440, height: 900 };
+  const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone });
+  await ctx.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.STUDY_LAB_CONFIG={};" }));
+  await ctx.addInitScript(([s, t]) => { if (sessionStorage.getItem("seeded")) return; sessionStorage.setItem("seeded", "1"); localStorage.setItem("study-lab-progress-v1", s); localStorage.setItem("study-lab-theme", t); }, [SEED, theme]);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); }); p.on("pageerror", (e) => errs.push(e.message));
+  await p.goto(BASE); await ready(p);
+  await p.evaluate(() => window.__studyLab.start("mixed", ["eng", "econ"], { ids: ["eng30", "econ21"] }));
+  await p.locator("#q-stem").waitFor();
+  await p.waitForFunction(() => performance.getEntriesByType("resource").some((e) => /context\/econ\.js/.test(e.name)));
+  const tag = `${phone ? "phone-390x844" : "desktop"}-${theme}`;
+  const press = (loc) => (phone ? loc.tap() : loc.click());
+  const wi = await p.evaluate(() => window.__studyLab.state.sess.items[0].order.indexOf("Walking to school, I got caught in the rain."));
+  await press(p.locator(".choice").nth(wi));
+  await p.locator(".ctx-why").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  const ov = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+  check(`explanations ${tag}: wrong-answer view fits (no sideways scroll)`, ov <= 0, "ov=" + ov);
+  await p.screenshot({ path: path.join(exOut, `01-wrong-answer-dangling-modifier-${tag}.png`), fullPage: true });
+  await press(p.locator('[data-action="next"]'));
+  await p.locator("#q-stem").waitFor();
+  await press(p.locator(".choice").nth(await p.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; return it.order.indexOf(QMAP[it.qid].c[0]); })));
+  await p.locator("details.ctx-more").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.screenshot({ path: path.join(exOut, `02-right-answer-collapsed-${tag}.png`), fullPage: true });
+  await press(p.locator("details.ctx-more > summary"));
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.screenshot({ path: path.join(exOut, `03-right-answer-more-context-open-${tag}.png`), fullPage: true });
+  await press(p.locator('[data-action="next"]'));
+  await p.locator("#q-stem").waitFor();
+  await press(p.locator(".choice").nth(await p.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; return it.order.indexOf(QMAP[it.qid].c[0]); })));
+  await press(p.locator('[data-action="next"]'));
+  await p.locator(".topics-work").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.screenshot({ path: path.join(exOut, `04-summary-topics-to-work-on-${tag}.png`), fullPage: true });
+  check(`explanations ${tag}: no console errors`, errs.length === 0, errs.join(" | "));
+  await ctx.close();
+}
+// ---- Study: lesson list, a lesson, a check question beside the lesson, the summary ----
+for (const [theme, phone] of [["light", false], ["dark", true], ["dark", false], ["light", true]]) {
+  const vp = phone ? { width: 390, height: 844 } : { width: 1440, height: 900 };
+  const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone });
+  await ctx.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.STUDY_LAB_CONFIG={};" }));
+  await ctx.addInitScript(([s, t]) => { if (sessionStorage.getItem("seeded")) return; sessionStorage.setItem("seeded", "1"); localStorage.setItem("study-lab-progress-v1", s); localStorage.setItem("study-lab-theme", t); localStorage.setItem("study-lab-studied-v1", JSON.stringify({ "study-math-1": 1, "study-sci-2": 1 })); }, [SEED, theme]);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); }); p.on("pageerror", (e) => errs.push(e.message));
+  await p.goto(BASE); await ready(p);
+  const tag = `${phone ? "phone-390x844" : "desktop"}-${theme}`;
+  const press = (loc) => (phone ? loc.tap() : loc.click());
+  const fits = async (what) => check(`study ${tag}: ${what} fits (no sideways scroll)`, (await p.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0);
+  await p.locator("#study").screenshot({ path: path.join(exOut, `05-study-lessons-${tag}.png`) });
+  await fits("the Study list");
+  await press(p.locator('.lesson-link[data-arg="study-eng-4"]').first());
+  await p.locator(".lesson-body").waitFor();
+  await p.evaluate(() => document.fonts.ready); await p.waitForTimeout(150);
+  await fits("a lesson");
+  await p.screenshot({ path: path.join(exOut, `06-lesson-argument-and-rhetoric-${tag}.png`), fullPage: true });
+  await press(p.locator('[data-action="check"]'));
+  await p.locator("#q-stem").waitFor();
+  await p.waitForFunction(() => performance.getEntriesByType("resource").some((e) => /context\/eng\.js/.test(e.name)));
+  // the first question, answered wrong, with the lesson beside it (opened on phones)
+  if (phone) { await p.locator(".lsat-bar-btn").tap(); }
+  await press(p.locator(".choice").nth(await p.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; return (it.order.indexOf(QMAP[it.qid].c[0]) + 1) % it.order.length; })));
+  await p.locator(".ctx-why").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await fits("a lesson question");
+  await p.screenshot({ path: path.join(exOut, `07-lesson-check-wrong-answer-${tag}.png`), fullPage: true });
+  await press(p.locator('[data-action="next"]'));
+  while (await p.locator("#q-stem").count()) {
+    await press(p.locator(".choice").nth(await p.evaluate(() => { const { state, QMAP } = window.__studyLab; const it = state.sess.items[state.sess.idx]; return it.order.indexOf(QMAP[it.qid].c[0]); })));
+    await press(p.locator('[data-action="next"]'));
+  }
+  await p.locator(".results").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.screenshot({ path: path.join(exOut, `08-lesson-check-summary-${tag}.png`), fullPage: true });
+  check(`study ${tag}: no console errors`, errs.length === 0, errs.join(" | "));
+  await ctx.close();
+}
 fs.copyFileSync(path.join(siteDir, "og.png"), path.join(out, "og.png"));
 // JPEG copies under 400 KB for sharing (needs python3 + Pillow).
 const share = process.env.SHARE_DIR || path.resolve(siteDir, "..", "review-share", "redesign");
@@ -323,6 +411,8 @@ const qtTmp = fs.mkdtempSync(path.join(out, ".qt-"));
 for (const f of qtShare) fs.copyFileSync(path.join(qtOut, f), path.join(qtTmp, f));
 console.log(execFileSync("python3", ["-c", py, qtTmp, qtShareDir]).toString().trim());
 fs.rmSync(qtTmp, { recursive: true });
+const exShare = process.env.EXPL_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "explanations");
+console.log(execFileSync("python3", ["-c", py, exOut, exShare]).toString().trim());
 const msShare = process.env.MENU_SMOOTH_SHARE_DIR || path.resolve(siteDir, "..", "review-share", "menu-smooth");
 console.log(execFileSync("python3", ["-c", py, msOut, msShare]).toString().trim());
 await browser.close(); server.kill();
